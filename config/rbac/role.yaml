@@ -1,11 +1,32 @@
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  labels:
-    app.kubernetes.io/name: static-s3-operator
-    app.kubernetes.io/managed-by: kustomize
   name: manager-role
 rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - web.rka.sh
+  resources:
+  - staticsites
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - web.rka.sh
+  resources:
+  - staticsites/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - web.rka.sh
+  resources:
+  - staticsites/status
+  verbs:
+  - get
+  - patch
+  - update
