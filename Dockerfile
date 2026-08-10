@@ -1,4 +1,8 @@
-# Build the manager binary
+# Build the manager and syncer binaries.
+#
+# Both ship in the same image on purpose: the operator reads its own image from
+# its Pod and runs sync Jobs with it, so a manager and its syncer can never drift
+# apart across an upgrade.
 FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -20,12 +24,14 @@ COPY . .
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o syncer cmd/syncer/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/syncer .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

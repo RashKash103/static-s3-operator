@@ -12,6 +12,7 @@ the full license text.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -20,10 +21,12 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -31,7 +34,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	webv1alpha1 "github.com/rashkash103/static-s3-operator/api/v1alpha1"
+	operatorconfig "github.com/rashkash103/static-s3-operator/internal/config"
 	"github.com/rashkash103/static-s3-operator/internal/controller"
+	"github.com/rashkash103/static-s3-operator/internal/provisioner"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -74,6 +79,13 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
+	// Operator behaviour: the defaults that fill in optional StaticSite fields and
+	// the knobs for talking to registries and S3 providers. The Helm chart renders
+	// every one of these from its values file.
+	defaults := operatorconfig.New()
+	defaults.BindFlags(flag.CommandLine)
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -156,6 +168,14 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "ab7ff062.rka.sh",
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				// Caching Secrets would mean watching every Secret in the cluster just to
+				// read a handful of credentials, which is a large amount of memory and a
+				// large amount of trust for no benefit. These are read directly instead.
+				DisableFor: []client.Object{&corev1.Secret{}},
+			},
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -173,9 +193,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The syncer ships in this same image, so sync Jobs run whatever the operator
+	// is running unless an image was named explicitly.
+	if err := defaults.ResolveSyncerImage(context.Background(), mgr.GetAPIReader()); err != nil {
+		setupLog.Error(err, "Failed to determine the syncer image")
+		os.Exit(1)
+	}
+	if err := defaults.Validate(); err != nil {
+		setupLog.Error(err, "Invalid operator configuration")
+		os.Exit(1)
+	}
+	setupLog.Info("Resolved operator configuration",
+		"syncerImage", defaults.SyncerImage,
+		"defaultRegion", defaults.Region,
+		"defaultEndpoint", defaults.Endpoint,
+		"defaultSourcePath", defaults.SourcePath,
+		"defaultIndexDocument", defaults.IndexDocument,
+		"defaultErrorDocument", defaults.ErrorDocument,
+		"defaultPullInterval", defaults.PullInterval.String())
+
 	if err := (&controller.StaticSiteReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Recorder:    mgr.GetEventRecorderFor("staticsite-controller"),
+		Defaults:    defaults,
+		Provisioner: provisioner.NewS3Provisioner(defaults.RequestChecksumWhenSupported, defaults.SkipTLSVerify),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "staticsite")
 		os.Exit(1)

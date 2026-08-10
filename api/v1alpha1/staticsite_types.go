@@ -81,11 +81,19 @@ const (
 	ManagedByValue = "static-s3-operator"
 	// SiteNameLabel is the StaticSite a generated resource belongs to.
 	SiteNameLabel = GroupName + "/staticsite"
-	// SiteUIDLabel is the StaticSite UID a generated resource belongs to.
+	// SiteUIDLabel is the StaticSite UID a generated resource belongs to. It is
+	// what lets the operator recognise its own Jobs after a restart, including a
+	// Job whose name it never managed to record.
 	SiteUIDLabel = GroupName + "/staticsite-uid"
 	// DigestLabel is the short image digest a sync Job was pinned to.
 	DigestLabel = GroupName + "/digest"
+	// SyncHashLabel is the short sync-settings fingerprint a Job ran with.
+	SyncHashLabel = GroupName + "/sync-hash"
 )
+
+// Finalizer is placed on a StaticSite so the operator can tear down the bucket
+// before the resource disappears.
+const Finalizer = GroupName + "/finalizer"
 
 // StaticSitePhase is a coarse, human-oriented summary of where a StaticSite is
 // in its lifecycle. It is derived from the conditions and exists for `kubectl
@@ -553,6 +561,7 @@ type ServiceSpec struct {
 	// proxy in front of it has to add the bucket prefix.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
 	ExternalName string `json:"externalName,omitempty"`
 
 	// hostnames are the DNS names this site should answer on. They are rendered
@@ -560,6 +569,9 @@ type ServiceSpec struct {
 	// --external-dns-hostname-annotation flag controls, so the common case needs
 	// no annotation boilerplate. Anything set in annotations wins over this.
 	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^(\*\.)?[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
 	Hostnames []string `json:"hostnames,omitempty"`
 
 	// annotations are merged onto the Service, and override any annotation the
@@ -772,6 +784,13 @@ type StaticSiteStatus struct {
 	// activeSyncJob is the Job currently performing a sync, if any.
 	// +optional
 	ActiveSyncJob string `json:"activeSyncJob,omitempty"`
+
+	// lastHandledSyncRequest is the value of the
+	// "web.rka.sh/sync-requested-at" annotation that last triggered a sync. The
+	// operator compares the annotation against this to tell a new request from
+	// one it has already acted on.
+	// +optional
+	LastHandledSyncRequest string `json:"lastHandledSyncRequest,omitempty"`
 
 	// failedSyncs counts consecutive failed sync attempts. It resets to zero on
 	// success and drives the retry backoff.

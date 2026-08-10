@@ -6,4 +6,39 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: staticsite-sample
 spec:
-  # TODO(user): Add fields here
+  source:
+    # A tagged reference is re-resolved every pullInterval, and the site is
+    # re-synced whenever the tag starts pointing at a new digest.
+    image: ghcr.io/rashkash103/example-site:latest
+    # The directory inside the image whose contents become the site root. Omit it
+    # to use the operator's --default-source-path.
+    path: /usr/share/nginx/html
+    pullInterval: 24h
+
+  bucket:
+    # Immutable, and global per provider, so pick something unlikely to collide.
+    name: example-site-rka-sh
+    region: us-east-1
+    website:
+      indexDocument: index.html
+      errorDocument: 404.html
+
+  sync:
+    # Objects no longer in the image are removed, so the bucket mirrors the image
+    # rather than accumulating every version ever published.
+    deleteRemoved: true
+    cacheControl:
+      # Build output with a content hash in the filename never changes, so it can
+      # be cached forever. Everything else has to stay revalidated or visitors
+      # would keep seeing the old site.
+      - pattern: "assets/**"
+        value: "public, max-age=31536000, immutable"
+      - pattern: "**/*.html"
+        value: "public, max-age=0, must-revalidate"
+
+  service:
+    # An ExternalName Service pointing at the bucket's website hostname, which
+    # external-dns turns into CNAME records.
+    enabled: true
+    hostnames:
+      - example.rka.sh

@@ -270,6 +270,7 @@ spec:
                       expressed as a CNAME alone: the record will resolve to the endpoint and a
                       proxy in front of it has to add the bucket prefix.
                     maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
                     type: string
                   hostnames:
                     description: |-
@@ -278,7 +279,10 @@ spec:
                       --external-dns-hostname-annotation flag controls, so the common case needs
                       no annotation boilerplate. Anything set in annotations wins over this.
                     items:
+                      maxLength: 253
+                      pattern: ^(\*\.)?[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
                       type: string
+                    maxItems: 20
                     type: array
                   labels:
                     additionalProperties:
@@ -3637,6 +3641,13 @@ spec:
                   success and drives the retry backoff.
                 format: int32
                 type: integer
+              lastHandledSyncRequest:
+                description: |-
+                  lastHandledSyncRequest is the value of the
+                  "web.rka.sh/sync-requested-at" annotation that last triggered a sync. The
+                  operator compares the annotation against this to tell a new request from
+                  one it has already acted on.
+                type: string
               lastResolveTime:
                 description: |-
                   lastResolveTime is when the image reference was last resolved against the
