@@ -90,9 +90,26 @@ cannot touch anything else in the account:
 A resource prefix is the single most useful restriction here. `s3:DeleteBucket`
 is in the policy because deleting a `StaticSite` deletes its bucket; scoping the
 resource is what stops a mistyped `spec.bucket.name` from reaching a bucket that
-matters. The operator's own ownership check is the second line of defence — it
-refuses to delete a bucket it cannot prove it created — but a scoped key is the
-one that does not depend on the operator being correct.
+matters.
+
+For the prefix to cover every site, it has to match how buckets get named. Sites
+that leave `spec.bucket.name` out are named by
+[`operator.defaults.bucketNameTemplate`](configuration.md#how-a-bucket-name-is-generated),
+so give the template the same prefix as the policy:
+
+```yaml
+operator:
+  defaults:
+    # Matches "arn:aws:s3:::my-sites-*" in the policy above.
+    bucketNameTemplate: "my-sites-{{ .Namespace }}-{{ .Name }}"
+```
+
+Then a site that names its own bucket outside that prefix fails loudly at
+`CreateBucket` rather than succeeding somewhere unintended.
+
+The operator's own ownership check is the second line of defence — it refuses to
+delete a bucket it cannot prove it created — but a scoped key is the one that does
+not depend on the operator being correct.
 
 The `arn:aws:s3:::` form is what S3-compatible providers use in policy documents
 too, whatever their own naming.

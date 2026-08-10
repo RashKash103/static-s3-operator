@@ -9,6 +9,7 @@ will and will not do to a bucket.
 - [A reconcile pass](#a-reconcile-pass)
 - [Why publishing runs as a Job](#why-publishing-runs-as-a-job)
 - [How the syncer decides what to upload](#how-the-syncer-decides-what-to-upload)
+- [Which bucket a site publishes to](#which-bucket-a-site-publishes-to)
 - [Bucket ownership](#bucket-ownership)
 - [Security model](#security-model)
 - [Failure handling](#failure-handling)
@@ -129,6 +130,28 @@ outside the tree are skipped; device, FIFO and socket entries are ignored; file
 modes are fixed rather than taken from the image, so a setuid bit cannot survive;
 and total size and file count are capped (`--max-extract-bytes`,
 `--max-extract-files`).
+
+## Which bucket a site publishes to
+
+A site that names no bucket gets one derived from its namespace and name, through
+`operator.defaults.bucketNameTemplate`. The
+[rule is documented in full](configuration.md#how-a-bucket-name-is-generated) so
+the name can be worked out rather than discovered, which is what makes it possible
+to pre-create the bucket or scope a policy to it.
+
+Resolution is sticky, and the order is:
+
+1. `spec.bucket.name`, if set. The CRD makes it immutable.
+2. `status.bucketName`, if the site has already resolved one.
+3. The template, sanitised into a legal bucket name.
+
+Step 2 is the one that matters. Without it, editing a cluster-wide template would
+change the answer for every site that relies on it, moving each onto a fresh bucket
+and orphaning the old one on the next reconcile. Recording the resolved name means
+a template change only affects sites created afterwards.
+
+Adding `spec.bucket.name` to a site that has already resolved a different one is
+refused rather than acted on, for the same reason.
 
 ## Bucket ownership
 
