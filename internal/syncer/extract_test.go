@@ -21,11 +21,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr/testr"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
-	"github.com/go-logr/logr/testr"
 )
 
 // tarEntry is one file, directory or link in a synthetic image layer.

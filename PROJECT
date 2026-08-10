@@ -6,6 +6,10 @@ cliVersion: 4.15.0
 domain: rka.sh
 layout:
 - go.kubebuilder.io/v4
+plugins:
+  helm.kubebuilder.io/v2-alpha:
+    manifests: dist/install.yaml
+    output: dist
 projectName: static-s3-operator
 repo: github.com/rashkash103/static-s3-operator
 resources:

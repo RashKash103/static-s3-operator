@@ -101,8 +101,18 @@ type WebsiteConfig struct {
 	ErrorDocument string
 }
 
+// ErrWebsiteUnsupported reports that the provider does not implement website
+// configuration.
+//
+// Several widely used S3-compatible providers do not, and a website bucket is
+// still perfectly usable without it: the objects are served, only the
+// index-document rewrite for a directory request is missing. Callers treat this as
+// a limitation to report rather than a failure to retry.
+var ErrWebsiteUnsupported = errors.New("this S3 provider does not support website configuration")
+
 // EnsureWebsite makes the bucket's website configuration match want, and reports
-// whether anything had to change.
+// whether anything had to change. It returns ErrWebsiteUnsupported when the
+// provider does not implement the call at all.
 func (m *BucketManager) EnsureWebsite(ctx context.Context, bucket string, want WebsiteConfig) (bool, error) {
 	if want.IndexDocument == "" {
 		return false, errors.New("website index document is empty")
@@ -134,6 +144,9 @@ func (m *BucketManager) EnsureWebsite(ctx context.Context, bucket string, want W
 	}
 
 	if _, err := m.Client.PutBucketWebsite(ctx, input); err != nil {
+		if IsUnsupportedRequest(err) {
+			return false, fmt.Errorf("%w: %v", ErrWebsiteUnsupported, err)
+		}
 		return false, fmt.Errorf("configure website hosting on %q: %w", bucket, err)
 	}
 	return true, nil
@@ -216,9 +229,15 @@ func (m *BucketManager) RemovePolicy(ctx context.Context, bucket string) error {
 // public-read policy can take effect.
 //
 // AWS blocks public access on new buckets by default, which silently defeats the
-// bucket policy. Providers that do not implement public access blocks have
-// nothing to clear, so their refusal is not an error.
-func (m *BucketManager) AllowPublicPolicy(ctx context.Context, bucket string) error {
+// bucket policy, so this has to run before the policy is written. Public access
+// blocks are an AWS-specific feature that most S3-compatible providers do not
+// implement, and a provider that has nothing to clear is not a failure.
+//
+// It reports whether the block was actually cleared, so a caller can say so, but
+// never fails for a provider that does not implement the call. The bucket policy
+// is the operation that really has to succeed, and it fails loudly if a block is
+// still in the way.
+func (m *BucketManager) AllowPublicPolicy(ctx context.Context, bucket string) (bool, error) {
 	_, err := m.Client.PutPublicAccessBlock(ctx, &s3.PutPublicAccessBlockInput{
 		Bucket: aws.String(bucket),
 		PublicAccessBlockConfiguration: &types.PublicAccessBlockConfiguration{
@@ -229,10 +248,12 @@ func (m *BucketManager) AllowPublicPolicy(ctx context.Context, bucket string) er
 		},
 	})
 	switch {
-	case err == nil, IsMissingConfiguration(err), IsUnsupported(err):
-		return nil
+	case err == nil:
+		return true, nil
+	case IsMissingConfiguration(err), IsUnsupportedRequest(err), IsAccessDenied(err):
+		return false, nil
 	default:
-		return fmt.Errorf("clear the public access block on %q: %w", bucket, err)
+		return false, fmt.Errorf("clear the public access block on %q: %w", bucket, err)
 	}
 }
 

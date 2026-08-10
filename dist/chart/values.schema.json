@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "static-s3-operator Helm values",
+  "description": "Values for the static-s3-operator chart. The `operator` block is validated strictly, so a mistyped setting is reported by `helm install` rather than silently ignored.",
+  "type": "object",
+  "properties": {
+    "nameOverride": {
+      "type": "string",
+      "description": "Partially override the generated resource names, keeping the release name."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Fully override the generated resource names."
+    },
+
+    "operator": {
+      "type": "object",
+      "description": "Operator behaviour. Every setting here becomes a command line flag on the manager.",
+      "additionalProperties": false,
+      "properties": {
+        "defaults": {
+          "type": "object",
+          "description": "Defaults applied to StaticSite fields that are left unset, so a site only spells out what makes it different.",
+          "additionalProperties": false,
+          "properties": {
+            "sourcePath": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Directory inside the site image whose contents become the site root, used when a StaticSite omits spec.source.path."
+            },
+            "pullInterval": {
+              "type": "string",
+              "pattern": "^0$|^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$",
+              "description": "How often a mutable image tag is re-resolved, used when a StaticSite omits spec.source.pullInterval. \"0\" disables polling."
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1,
+              "description": "S3 region, used when a StaticSite omits spec.bucket.region."
+            },
+            "endpoint": {
+              "type": "string",
+              "description": "S3 API endpoint for an S3-compatible provider, used when a StaticSite omits spec.bucket.endpoint. Empty means AWS S3."
+            },
+            "forcePathStyle": {
+              "type": "boolean",
+              "description": "Address buckets as endpoint/bucket instead of bucket.endpoint. Most S3-compatible providers need this."
+            },
+            "websiteEndpointTemplate": {
+              "type": "string",
+              "description": "Go template for a site's public URL, evaluated with {{.Bucket}}, {{.Region}} and {{.Endpoint}}."
+            },
+            "indexDocument": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/]+$",
+              "description": "Object served for directory requests, used when a StaticSite omits spec.bucket.website.indexDocument."
+            },
+            "errorDocument": {
+              "type": "string",
+              "description": "Object served for 4xx responses. Empty configures no error document; set it to the index document for a client-routed single page application."
+            },
+            "cacheControl": {
+              "type": "string",
+              "description": "Cache-Control header for objects matched by no spec.sync.cacheControl rule. Empty sends no header."
+            }
+          }
+        },
+
+        "externalDNS": {
+          "type": "object",
+          "description": "The ExternalName Service the operator maintains for each site.",
+          "additionalProperties": false,
+          "properties": {
+            "hostnameAnnotation": {
+              "type": "string",
+              "description": "Annotation key that spec.service.hostnames are rendered into. Empty renders no hostname annotation."
+            }
+          }
+        },
+
+        "syncer": {
+          "type": "object",
+          "description": "Sync Jobs.",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string",
+              "description": "Image for sync Jobs. Leave empty so the operator reuses its own image, which keeps the manager and syncer in lockstep across an upgrade."
+            },
+            "imagePullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Pull policy for the syncer image."
+            },
+            "maxExtractBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Largest total size a sync Job will unpack from an image."
+            },
+            "maxExtractFiles": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Largest number of files a sync Job will unpack from an image."
+            }
+          }
+        },
+
+        "reconcile": {
+          "type": "object",
+          "description": "Reconcile pacing.",
+          "additionalProperties": false,
+          "properties": {
+            "maxConcurrentReconciles": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of StaticSite reconcile workers."
+            },
+            "syncRetryBaseDelay": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$",
+              "description": "First retry delay after a failed sync."
+            },
+            "syncRetryMaxDelay": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$",
+              "description": "Upper bound on the retry delay, and the deadline after which a failing teardown gives the bucket up rather than wedging the finalizer."
+            },
+            "ownershipRecheckInterval": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$",
+              "description": "How often an idle, healthy site re-verifies its bucket configuration and ownership record."
+            }
+          }
+        },
+
+        "s3": {
+          "type": "object",
+          "description": "S3 client behaviour for non-AWS providers.",
+          "additionalProperties": false,
+          "properties": {
+            "requestChecksumWhenSupported": {
+              "type": "boolean",
+              "description": "Send trailing CRC32 checksums on every upload. Off by default because several S3-compatible providers reject those requests."
+            },
+            "skipTLSVerify": {
+              "type": "boolean",
+              "description": "Do not verify S3 endpoint certificates. Development only."
+            }
+          }
+        },
+
+        "credentials": {
+          "type": "object",
+          "description": "S3 credentials for sites that name none of their own. Prefer existingSecret so the access key never lands in a values file or a Helm release.",
+          "additionalProperties": false,
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "description": "Render a Secret from accessKeyID and secretAccessKey below."
+            },
+            "accessKeyID": {
+              "type": "string",
+              "description": "Access key ID, used only when create is true."
+            },
+            "secretAccessKey": {
+              "type": "string",
+              "description": "Secret access key, used only when create is true."
+            },
+            "sessionToken": {
+              "type": "string",
+              "description": "Session token for temporary credentials, used only when create is true."
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Name of a Secret that already exists in the release namespace. Mutually exclusive with create."
+            },
+            "accessKeyIDKey": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Key within the Secret holding the access key ID."
+            },
+            "secretAccessKeyKey": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Key within the Secret holding the secret access key."
+            },
+            "sessionTokenKey": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Key within the Secret holding an optional session token."
+            },
+            "mirrorToSiteNamespaces": {
+              "type": "boolean",
+              "description": "Copy the credentials into a site's namespace so its sync Job can read them. With this off, every StaticSite outside the release namespace must set spec.bucket.credentials."
+            }
+          },
+          "allOf": [
+            {
+              "description": "create and existingSecret are two ways of naming the same Secret, so only one may be used.",
+              "not": {
+                "type": "object",
+                "properties": {
+                  "create": { "const": true },
+                  "existingSecret": { "type": "string", "minLength": 1 }
+                },
+                "required": ["create", "existingSecret"]
+              }
+            },
+            {
+              "description": "Rendering a Secret needs both halves of the access key.",
+              "if": {
+                "type": "object",
+                "properties": { "create": { "const": true } },
+                "required": ["create"]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "accessKeyID": { "type": "string", "minLength": 1 },
+                  "secretAccessKey": { "type": "string", "minLength": 1 }
+                },
+                "required": ["accessKeyID", "secretAccessKey"]
+              }
+            }
+          ]
+        }
+      }
+    },
+
+    "manager": {
+      "type": "object",
+      "description": "The controller manager Deployment.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          },
+          "required": ["repository"]
+        },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "array", "items": { "type": "object" } },
+        "envOverrides": { "type": "object" },
+        "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "resources": { "type": "object" },
+        "affinity": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "strategy": { "type": "object" },
+        "priorityClassName": { "type": "string" },
+        "topologySpreadConstraints": { "type": "array" },
+        "terminationGracePeriodSeconds": { "type": ["integer", "null"], "minimum": 0 },
+        "labels": { "type": "object" },
+        "annotations": { "type": "object" },
+        "pod": { "type": "object" },
+        "extraVolumes": { "type": "array" },
+        "extraVolumeMounts": { "type": "array" }
+      }
+    },
+
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "namespaced": {
+          "type": "boolean",
+          "description": "Install a Role and RoleBinding scoped to the release namespace instead of cluster-wide RBAC."
+        },
+        "helpers": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Install convenience admin, editor and viewer roles for StaticSite."
+            }
+          }
+        }
+      }
+    },
+
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" },
+        "labels": { "type": "object" }
+      }
+    },
+
+    "crd": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Install the StaticSite CRD with the chart." },
+        "keep": {
+          "type": "boolean",
+          "description": "Keep the CRD when the release is uninstalled. Removing it deletes every StaticSite, and with them their buckets."
+        }
+      }
+    },
+
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "secure": { "type": "boolean" }
+      }
+    },
+
+    "certManager": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+
+    "prometheus": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+
+    "networkPolicy": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" } }
+    }
+  }
+}

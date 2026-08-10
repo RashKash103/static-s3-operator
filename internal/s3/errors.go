@@ -110,6 +110,28 @@ func IsUnsupported(err error) bool {
 	return false
 }
 
+// IsUnsupportedRequest reports that the provider does not understand a request
+// at all.
+//
+// It is deliberately broader than IsUnsupported, and is only used for the two
+// AWS-shaped calls that S3-compatible providers most often lack: website
+// configuration and public access blocks. Several answer an unimplemented
+// subresource with 400 MalformedXML rather than 501 NotImplemented, and since the
+// operator sends a fixed, known-good document for both, a complaint about the
+// document means the provider does not implement the call.
+//
+// Do not reach for this on calls where a malformed request could plausibly be the
+// operator's own fault.
+func IsUnsupportedRequest(err error) bool {
+	if err == nil {
+		return false
+	}
+	if IsUnsupported(err) {
+		return true
+	}
+	return hasCode(err, "MalformedXML", "MalformedXMLError", "InvalidArgument", "BadRequest")
+}
+
 // IsMissingConfiguration reports that the bucket simply has no website, policy,
 // tag set or public access block yet, which is the normal state of a fresh
 // bucket rather than a failure.

@@ -3697,6 +3697,15 @@ spec:
                   digest. Empty for digest-pinned sources and when polling is disabled.
                 format: date-time
                 type: string
+              nextSyncTime:
+                description: |-
+                  nextSyncTime is the earliest the operator will start another sync after a
+                  failure. It backs off exponentially with failedSyncs, and exists so that a
+                  site whose syncs keep failing does not start a new Job every time the last
+                  one's status changes. It is cleared on success, and ignored when a sync is
+                  requested by annotation.
+                format: date-time
+                type: string
               observedGeneration:
                 description: |-
                   observedGeneration is the metadata.generation this status was computed

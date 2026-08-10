@@ -1,0 +1,9 @@
+{
+  "schemas": [
+    {
+      "apiVersion": "web.rka.sh/v1alpha1",
+      "kind": "StaticSite",
+      "file": "staticsite-v1alpha1.json"
+    }
+  ]
+}

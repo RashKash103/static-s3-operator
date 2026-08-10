@@ -112,11 +112,11 @@ type Defaults struct {
 // New returns the built-in defaults, before flags are parsed.
 func New() *Defaults {
 	return &Defaults{
-		SourcePath:               "/usr/share/nginx/html",
-		PullInterval:             24 * time.Hour,
-		Region:                   "us-east-1",
-		IndexDocument:            "index.html",
-		ErrorDocument:            "404.html",
+		SourcePath:    "/usr/share/nginx/html",
+		PullInterval:  24 * time.Hour,
+		Region:        "us-east-1",
+		IndexDocument: "index.html",
+		ErrorDocument: "404.html",
 
 		ExternalDNSHostnameAnnotation: "external-dns.alpha.kubernetes.io/hostname",
 

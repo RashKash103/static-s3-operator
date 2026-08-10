@@ -238,13 +238,29 @@ func (r *StaticSiteReconciler) provisionBucket(
 	}
 
 	message := fmt.Sprintf("Bucket %q is configured for website hosting", effective.Bucket)
-	if result.Adopted {
+	switch {
+	case result.Adopted:
 		message = fmt.Sprintf(
 			"Bucket %q was adopted rather than created, so it will not be deleted with this StaticSite",
 			effective.Bucket)
+	case result.WebsiteUnsupported:
+		// Said plainly, because the symptom otherwise looks like a broken site: the
+		// objects are all there, but a request for a directory does not find its
+		// index document.
+		message = fmt.Sprintf(
+			"Bucket %q is ready, but this S3 provider does not support website configuration, "+
+				"so requests for a directory are not rewritten to %q. Link to files directly, "+
+				"or put a CDN in front that does the rewrite.",
+			effective.Bucket, effective.IndexDocument)
+	case !effective.WebsiteEnabled:
+		message = fmt.Sprintf("Bucket %q is ready; website configuration is disabled", effective.Bucket)
 	}
 	setCondition(site, webv1alpha1.ConditionBucketReady, metav1.ConditionTrue,
 		webv1alpha1.ReasonBucketReady, message)
+
+	if result.WebsiteUnsupported {
+		log.Info("The S3 provider does not support website configuration", "bucket", effective.Bucket)
+	}
 	return nil
 }
 
@@ -424,6 +440,7 @@ func (r *StaticSiteReconciler) reconcileSync(
 	}
 
 	if !r.needsSync(site, reference, syncHash) {
+		site.Status.NextSyncTime = nil
 		setCondition(site, webv1alpha1.ConditionSynced, metav1.ConditionTrue, webv1alpha1.ReasonUpToDate,
 			fmt.Sprintf("Bucket %q holds the contents of %s", effective.Bucket, reference.Digest))
 		setCondition(site, webv1alpha1.ConditionReady, metav1.ConditionTrue, webv1alpha1.ReasonReady,
@@ -431,7 +448,35 @@ func (r *StaticSiteReconciler) reconcileSync(
 		return ctrl.Result{RequeueAfter: r.idleRequeue(site)}, nil
 	}
 
+	// A sync is due, but a failed one may still be backing off. Without this the
+	// backoff would be meaningless: finishing a Job produces a watch event, which
+	// reconciles immediately, which would start the next attempt at once and turn a
+	// persistently failing site into a Job-creating loop.
+	if remaining := r.syncBackoffRemaining(site); remaining > 0 {
+		logf.FromContext(ctx).V(1).Info("Waiting before retrying the sync",
+			"retryIn", remaining.String(), "failedSyncs", site.Status.FailedSyncs)
+		return ctrl.Result{RequeueAfter: remaining}, nil
+	}
+
 	return r.startSyncJob(ctx, site, effective, reference, credentials, syncHash)
+}
+
+// syncBackoffRemaining is how long is left of the retry delay after a failed
+// sync. An explicit sync request overrides it: somebody asking for a sync now has
+// more information than the backoff does.
+func (r *StaticSiteReconciler) syncBackoffRemaining(site *webv1alpha1.StaticSite) time.Duration {
+	if site.Status.NextSyncTime == nil {
+		return 0
+	}
+	if request := syncRequest(site); request != "" && request != site.Status.LastHandledSyncRequest {
+		return 0
+	}
+
+	remaining := site.Status.NextSyncTime.Time.Sub(r.now())
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining
 }
 
 // needsSync decides whether the bucket contents are stale.
@@ -559,15 +604,18 @@ func (r *StaticSiteReconciler) observeSyncJob(
 		recordAttempt(site, attempt, effective.RetainHistory)
 
 		site.Status.FailedSyncs++
+		delay := backoff(site.Status.FailedSyncs, r.Defaults.SyncRetryBaseDelay, r.Defaults.SyncRetryMaxDelay)
+		nextAttempt := metav1.NewTime(r.now().Add(delay))
+		site.Status.NextSyncTime = &nextAttempt
+
 		setCondition(site, webv1alpha1.ConditionSynced, metav1.ConditionFalse,
 			webv1alpha1.ReasonSyncFailed, message)
 		setCondition(site, webv1alpha1.ConditionReady, metav1.ConditionFalse,
 			webv1alpha1.ReasonSyncFailed, message)
 		r.Recorder.Event(site, corev1.EventTypeWarning, webv1alpha1.ReasonSyncFailed,
 			truncate(message, maxConditionMessage))
-		log.Info("Sync Job failed", "job", job.Name, "message", message)
+		log.Info("Sync Job failed", "job", job.Name, "message", message, "retryIn", delay.String())
 
-		delay := backoff(site.Status.FailedSyncs, r.Defaults.SyncRetryBaseDelay, r.Defaults.SyncRetryMaxDelay)
 		if err := r.pruneSyncJobs(ctx, site, effective.RetainHistory); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -578,6 +626,7 @@ func (r *StaticSiteReconciler) observeSyncJob(
 	recordAttempt(site, attempt, effective.RetainHistory)
 
 	site.Status.FailedSyncs = 0
+	site.Status.NextSyncTime = nil
 	site.Status.SyncedDigest = attempt.Digest
 	site.Status.SyncedSpecHash = job.Annotations[syncHashAnnotation]
 	site.Status.LastSyncTime = attempt.CompletionTime

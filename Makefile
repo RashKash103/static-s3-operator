@@ -63,6 +63,84 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+# The integration tests talk to a real S3 API rather than a mock, because what
+# they check is how a provider behaves. MINIO_IMAGE is a local, S3-compatible
+# server started in Docker for the duration of the run; point S3_TEST_ENDPOINT at
+# something else to run them against another provider.
+MINIO_IMAGE ?= quay.io/minio/minio:latest
+MINIO_CONTAINER ?= static-s3-operator-test-minio
+MINIO_PORT ?= 9100
+MINIO_ACCESS_KEY ?= minioadmin
+MINIO_SECRET_KEY ?= minioadmin
+
+.PHONY: test-integration
+test-integration: manifests generate fmt vet ## Run integration tests against a local S3 server started in Docker.
+	@$(MAKE) --no-print-directory start-minio
+	@set -e; trap '$(MAKE) --no-print-directory stop-minio' EXIT; \
+		S3_TEST_ENDPOINT=http://127.0.0.1:$(MINIO_PORT) \
+		S3_TEST_ACCESS_KEY=$(MINIO_ACCESS_KEY) \
+		S3_TEST_SECRET_KEY=$(MINIO_SECRET_KEY) \
+		go test -tags=integration -count=1 ./internal/s3/... ./internal/syncer/...
+
+.PHONY: start-minio
+start-minio: ## Start a local S3 server for the integration tests.
+	@if [ -n "$$(docker ps -aq -f name=^$(MINIO_CONTAINER)$$)" ]; then \
+		docker rm -f $(MINIO_CONTAINER) >/dev/null; \
+	fi
+	@echo "Starting a local S3 server on port $(MINIO_PORT)..."
+	@docker run -d --rm --name $(MINIO_CONTAINER) \
+		-p $(MINIO_PORT):9000 \
+		-e MINIO_ROOT_USER=$(MINIO_ACCESS_KEY) \
+		-e MINIO_ROOT_PASSWORD=$(MINIO_SECRET_KEY) \
+		$(MINIO_IMAGE) server /data >/dev/null
+	@echo "Waiting for the S3 server to become ready..."
+	@for i in $$(seq 1 60); do \
+		if curl -fsS "http://127.0.0.1:$(MINIO_PORT)/minio/health/live" >/dev/null 2>&1; then \
+			echo "S3 server is ready."; exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "The S3 server did not become ready in time; logs follow:"; \
+	docker logs $(MINIO_CONTAINER) || true; \
+	exit 1
+
+.PHONY: stop-minio
+stop-minio: ## Stop the local S3 server.
+	@docker rm -f $(MINIO_CONTAINER) >/dev/null 2>&1 || true
+
+.PHONY: schemas
+schemas: manifests ## Generate standalone JSON Schemas for the CRDs, for editor completion and validation.
+	go run ./hack/tools/genschema --crd-dir config/crd/bases --output-dir dist/schemas --id-prefix "$(SCHEMA_ID_PREFIX)"
+
+SCHEMA_ID_PREFIX ?= https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas
+
+.PHONY: verify-generated
+verify-generated: manifests generate schemas helm-chart ## Fail if generated files are out of date.
+	@if [ -n "$$(git status --porcelain -- config dist api)" ]; then \
+		echo "Generated files are out of date. Run 'make manifests generate schemas helm-chart' and commit the result:"; \
+		git --no-pager diff -- config dist api; \
+		exit 1; \
+	fi
+	@echo "Generated files are up to date."
+
+.PHONY: helm-chart
+helm-chart: manifests generate ## Regenerate the Helm chart from the kustomize output.
+	@echo "Regenerating the Helm chart. The chart's operator settings live in"
+	@echo "dist/chart/templates/_operator.tpl and the values block in values.yaml;"
+	@echo "re-apply the operatorArgs include in templates/manager/manager.yaml if the"
+	@echo "plugin overwrites it."
+	kubebuilder edit --plugins=helm/v2-alpha --force
+
+.PHONY: helm-lint
+helm-lint: ## Lint and render the Helm chart.
+	helm lint dist/chart
+	helm template static-s3-operator dist/chart >/dev/null
+	helm template static-s3-operator dist/chart \
+		--set operator.credentials.create=true \
+		--set operator.credentials.accessKeyID=test \
+		--set operator.credentials.secretAccessKey=test >/dev/null
+	@echo "Helm chart renders cleanly."
+
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # kubectl kuberc is disabled by default for test isolation; enable with:
@@ -205,6 +283,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.12.2
+KIND_VERSION ?= v0.31.0
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -227,6 +306,13 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+
+.PHONY: kind
+kind: ## Download kind locally if it is not already installed.
+	@command -v $(KIND) >/dev/null 2>&1 || { \
+		echo "Installing kind $(KIND_VERSION) into $(LOCALBIN)..."; \
+		$(call go-install-tool,$(LOCALBIN)/kind,sigs.k8s.io/kind,$(KIND_VERSION)) \
+	}
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
@@ -257,3 +343,50 @@ endef
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
+
+##@ Helm Deployment
+
+## Helm binary to use for deploying the chart
+HELM ?= helm
+## Namespace to deploy the Helm release
+HELM_NAMESPACE ?= static-s3-operator-system
+## Name of the Helm release
+HELM_RELEASE ?= static-s3-operator
+## Path to the Helm chart directory
+HELM_CHART_DIR ?= dist/chart
+## Additional arguments to pass to helm commands
+HELM_EXTRA_ARGS ?=
+
+.PHONY: install-helm
+install-helm: ## Install the latest version of Helm.
+	@command -v $(HELM) >/dev/null 2>&1 || { \
+		echo "Installing Helm..." && \
+		curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash; \
+	}
+
+.PHONY: helm-deploy
+helm-deploy: install-helm ## Deploy manager to the K8s cluster via Helm. Specify an image with IMG.
+	$(HELM) upgrade --install $(HELM_RELEASE) $(HELM_CHART_DIR) \
+		--namespace $(HELM_NAMESPACE) \
+		--create-namespace \
+		--set manager.image.repository=$${IMG%:*} \
+		--set manager.image.tag=$${IMG##*:} \
+		--wait \
+		--timeout 5m \
+		$(HELM_EXTRA_ARGS)
+
+.PHONY: helm-uninstall
+helm-uninstall: ## Uninstall the Helm release from the K8s cluster.
+	$(HELM) uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-status
+helm-status: ## Show Helm release status.
+	$(HELM) status $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-history
+helm-history: ## Show Helm release history.
+	$(HELM) history $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
+.PHONY: helm-rollback
+helm-rollback: ## Rollback to previous Helm release.
+	$(HELM) rollback $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)

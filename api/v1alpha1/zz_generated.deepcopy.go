@@ -320,6 +320,10 @@ func (in *StaticSiteStatus) DeepCopyInto(out *StaticSiteStatus) {
 		in, out := &in.LastSyncTime, &out.LastSyncTime
 		*out = (*in).DeepCopy()
 	}
+	if in.NextSyncTime != nil {
+		in, out := &in.NextSyncTime, &out.NextSyncTime
+		*out = (*in).DeepCopy()
+	}
 	if in.LastSyncStats != nil {
 		in, out := &in.LastSyncStats, &out.LastSyncStats
 		*out = new(SyncStats)

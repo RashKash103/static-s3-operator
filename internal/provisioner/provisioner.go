@@ -52,6 +52,10 @@ type ProvisionResult struct {
 	// Changes names what was reconciled, for an event and a log line. It is empty
 	// when the bucket was already in the desired state.
 	Changes []string
+	// WebsiteUnsupported reports that the provider does not implement website
+	// configuration, so requests for a directory will not be rewritten to the
+	// index document. The site is still served; only that rewrite is missing.
+	WebsiteUnsupported bool
 }
 
 // DeprovisionRequest is everything needed to decide whether a bucket may be

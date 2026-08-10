@@ -13,6 +13,7 @@ package provisioner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -220,18 +221,32 @@ func (p *S3Provisioner) establishOwnership(
 		recovered.VerifiedAt = &now
 		return &recovered, nil
 
-	case request.Ownership == nil || request.Ownership.Token == "":
-		// The bucket is claimed but this site has no record of claiming it. That is
-		// either somebody else's bucket or a status that was lost along with the
-		// only copy of the token; either way the operator must not assume it owns it.
-		return nil, fmt.Errorf(
-			"bucket %q already carries an ownership record from another StaticSite (%s); "+
-				"pick a different bucket name or delete that resource first",
-			effective.Bucket, describeOwner(existing))
+	case existing.UID != "" && existing.UID == request.SiteUID:
+		// The bucket records this exact StaticSite's UID, so it is ours even though
+		// the status the operator was handed does not say so. That happens whenever a
+		// status write is lost, and routinely for a moment after the bucket is
+		// created, because the next reconcile can read the StaticSite from a cache
+		// that has not caught up yet. Recovering the token from the bucket is what
+		// keeps that from looking like somebody else's bucket.
+		now := p.now()
+		recovered := &webv1alpha1.BucketOwnership{
+			Created:    true,
+			Token:      existing.Token,
+			VerifiedAt: &now,
+		}
+		if request.Ownership != nil {
+			recovered.CreatedAt = request.Ownership.CreatedAt
+		}
+		return recovered, nil
 
 	default:
+		// The bucket is claimed by something that is not this StaticSite. Two sites
+		// writing to one bucket would silently delete each other's files, so this
+		// stops rather than guessing.
 		return nil, fmt.Errorf(
-			"bucket %q is owned by another StaticSite (%s)", effective.Bucket, describeOwner(existing))
+			"bucket %q already carries an ownership record from another StaticSite (%s); "+
+				"pick a different bucket name, or delete that resource first",
+			effective.Bucket, describeOwner(existing))
 	}
 }
 
@@ -268,8 +283,9 @@ func (p *S3Provisioner) configureAccess(
 
 	if policy != "" {
 		// AWS blocks public bucket policies by default, which silently defeats the
-		// policy below, so the block is cleared first.
-		if err := buckets.AllowPublicPolicy(ctx, effective.Bucket); err != nil {
+		// policy below, so the block is cleared first. Providers without public
+		// access blocks have nothing to clear.
+		if _, err := buckets.AllowPublicPolicy(ctx, effective.Bucket); err != nil {
 			return err
 		}
 	}
@@ -300,6 +316,15 @@ func (p *S3Provisioner) configureWebsite(
 		ErrorDocument: effective.ErrorDocument,
 	})
 	if err != nil {
+		if errors.Is(err, s3.ErrWebsiteUnsupported) {
+			// Failing here would make the operator unusable on the several S3-compatible
+			// providers that do not implement website configuration, even though the
+			// bucket serves the site perfectly well through its policy. The limitation is
+			// reported instead, so nobody is left wondering why a directory request does
+			// not find index.html.
+			result.WebsiteUnsupported = true
+			return nil
+		}
 		return err
 	}
 	if changed {

@@ -1,0 +1,339 @@
+## String to partially override chart.fullname template (will maintain the release name)
+##
+# nameOverride: ""
+
+## String to fully override chart.fullname template
+##
+# fullnameOverride: ""
+
+## Configure the controller manager deployment
+##
+manager:
+  ## Set to false to skip manager installation
+  ##
+  enabled: true
+
+  replicas: 1
+
+  image:
+    repository: controller
+    ## Image tag (defaults to Chart.appVersion if not set)
+    ##
+    # tag: ""
+    pullPolicy: IfNotPresent
+
+  ## Arguments
+  ##
+  args:
+    - --leader-elect
+
+  ## Environment variables
+  ##
+  env:
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+
+  ## Env overrides (--set manager.envOverrides.VAR=value)
+  ## Same name in env above: this value takes precedence.
+  ##
+  envOverrides: {}
+
+  ## Image pull secrets
+  ##
+  # imagePullSecrets:
+  #   - name: myregistrykey
+
+  ## Pod-level security settings
+  ##
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+  ## Container-level security settings
+  ##
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+
+  ## Resource limits and requests
+  ##
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+
+  ## Manager pod's affinity
+  ##
+  affinity: {}
+
+  ## Manager pod's node selector
+  ##
+  nodeSelector: {}
+
+  ## Manager pod's tolerations
+  ##
+  tolerations: []
+
+  ## Deployment strategy
+  ##
+  # strategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxSurge: 25%
+  #     maxUnavailable: 25%
+
+  ## Priority class name
+  ##
+  # priorityClassName: ""
+
+  ## Topology spread constraints
+  ##
+  # topologySpreadConstraints: []
+
+  ## Termination grace period seconds
+  ##
+  terminationGracePeriodSeconds: 10
+
+  ## Custom Deployment labels
+  ##
+  # labels: {}
+
+  ## Custom Deployment annotations
+  ##
+  # annotations: {}
+
+  ## Custom Pod labels and annotations
+  ##
+  # pod:
+  #   labels: {}
+  #   annotations: {}
+
+## Operator behaviour.
+##
+## Everything here becomes a command line flag on the manager. These are the
+## cluster-wide choices that fill in optional StaticSite fields, so a site only
+## has to spell out what makes it different from the rest of the cluster.
+##
+operator:
+  ## Defaults applied to StaticSite fields that are left unset.
+  ##
+  defaults:
+    ## Directory inside the site image whose contents become the site root.
+    ## Used when a StaticSite omits spec.source.path.
+    ##
+    sourcePath: /usr/share/nginx/html
+
+    ## How often a mutable image tag is re-resolved to check for a new digest.
+    ## Used when a StaticSite omits spec.source.pullInterval. "0" disables
+    ## polling, so sites only sync on a spec change or an explicit request.
+    ##
+    pullInterval: 24h
+
+    ## S3 region, used when a StaticSite omits spec.bucket.region.
+    ##
+    region: us-east-1
+
+    ## S3 API endpoint for an S3-compatible provider, used when a StaticSite
+    ## omits spec.bucket.endpoint. Leave it empty for AWS S3.
+    ## Example: https://us-east-1.example-object-store.com
+    ##
+    endpoint: ""
+
+    ## Address buckets as endpoint/bucket instead of bucket.endpoint. Most
+    ## S3-compatible providers need this; AWS S3 does not.
+    ##
+    forcePathStyle: false
+
+    ## Go template for the site's public URL, evaluated with {{ .Bucket }},
+    ## {{ .Region }} and {{ .Endpoint }}. Set this when your provider's website
+    ## hostname differs from its API endpoint -- it is also what the generated
+    ## ExternalName Service points at.
+    ## Example: http://{{ .Bucket }}.website-{{ .Region }}.example-object-store.com
+    ##
+    websiteEndpointTemplate: ""
+
+    ## Website documents, used when a StaticSite omits them.
+    ## Set errorDocument to your index document for a client-routed single page
+    ## application, or to "" to configure no error document at all.
+    ##
+    indexDocument: index.html
+    errorDocument: 404.html
+
+    ## Cache-Control header for objects matched by no spec.sync.cacheControl
+    ## rule. Empty sends no header.
+    ##
+    cacheControl: ""
+
+  ## The ExternalName Service the operator maintains for each site.
+  ##
+  externalDNS:
+    ## Annotation key that spec.service.hostnames are rendered into. The default
+    ## is what external-dns reads. Set it to "" to render no hostname annotation.
+    ##
+    hostnameAnnotation: external-dns.alpha.kubernetes.io/hostname
+
+  ## Sync Jobs.
+  ##
+  syncer:
+    ## Image for sync Jobs. Leave it empty: the operator then reads its own Pod
+    ## and reuses its own image, so the manager and the syncer cannot drift apart
+    ## across an upgrade. Only set this if the syncer must come from elsewhere.
+    ##
+    image: ""
+    imagePullPolicy: IfNotPresent
+
+    ## Limits on what a sync Job will unpack from an image, as protection against
+    ## an image built to fill the Job's disk.
+    ##
+    maxExtractBytes: 2147483648
+    maxExtractFiles: 200000
+
+  ## Reconcile pacing.
+  ##
+  reconcile:
+    maxConcurrentReconciles: 4
+
+    ## Retry delay after a failed sync, doubling up to the maximum.
+    ##
+    syncRetryBaseDelay: 30s
+    syncRetryMaxDelay: 30m
+
+    ## How often an idle, healthy site re-verifies its bucket configuration and
+    ## ownership record.
+    ##
+    ownershipRecheckInterval: 1h
+
+  ## S3 client behaviour for non-AWS providers.
+  ##
+  s3:
+    ## Send trailing CRC32 checksums on every upload. Off by default because
+    ## several S3-compatible providers reject those requests outright.
+    ##
+    requestChecksumWhenSupported: false
+
+    ## Do not verify S3 endpoint certificates. Development only.
+    ##
+    skipTLSVerify: false
+
+  ## S3 credentials the operator uses for sites that name none of their own.
+  ##
+  ## The access key needs bucket create/delete, website, policy, tagging and
+  ## object read/write/delete permissions. See docs/credentials.md for a ready
+  ## made policy document and the commands to create a scoped user.
+  ##
+  credentials:
+    ## Render a Secret from the values below. Convenient for a first install and
+    ## for CI; for production prefer existingSecret so the key never lands in a
+    ## values file or a Helm release.
+    ##
+    create: false
+    accessKeyID: ""
+    secretAccessKey: ""
+    ## Only for temporary credentials.
+    ##
+    sessionToken: ""
+
+    ## Use a Secret that already exists in the release namespace instead.
+    ##
+    existingSecret: ""
+
+    ## Keys within the Secret.
+    ##
+    accessKeyIDKey: accessKeyID
+    secretAccessKeyKey: secretAccessKey
+    sessionTokenKey: sessionToken
+
+    ## Copy the credentials into a site's namespace so its sync Job can read
+    ## them. A sync Job can only read Secrets in its own namespace, so with this
+    ## off, every StaticSite outside the operator's namespace must set
+    ## spec.bucket.credentials itself. Turn it off in a multi-tenant cluster
+    ## where a cluster-wide credential should not be copied into tenant
+    ## namespaces.
+    ##
+    mirrorToSiteNamespaces: true
+
+## RBAC configuration
+##
+rbac:
+  ## RBAC resource scope
+  ## - false (default): ClusterRole/ClusterRoleBinding (all namespaces)
+  ## - true: Role/RoleBinding (release namespace only)
+  ##
+  namespaced: false
+
+  ## Helper roles for CRD management (admin/editor/viewer)
+  ##
+  helpers:
+    ## Install convenience admin/editor/viewer roles for CRDs
+    ##
+    enabled: false
+
+## ServiceAccount configuration
+##
+serviceAccount:
+  # Install default ServiceAccount provided
+  enabled: true
+
+  ## Existing ServiceAccount name (only when enabled=false)
+  ## Note: When enabled=true, respects nameOverride/fullnameOverride
+  ##
+  # name: ""
+
+  ## Custom ServiceAccount annotations
+  ##
+  # annotations: {}
+
+  ## Custom ServiceAccount labels
+  ##
+  # labels: {}
+
+## Custom Resource Definitions
+##
+crd:
+  # Install CRDs with the chart
+  enabled: true
+  # Keep CRDs when uninstalling
+  keep: true
+
+## Controller metrics endpoint.
+## Enable to expose /metrics endpoint
+##
+metrics:
+  enabled: true
+  # Metrics server port
+  port: 8443
+  # Enable secure metrics: HTTPS with certs/auth (true) or HTTP (false).
+  # Note: Metrics authn/authz needs ClusterRole access.
+  secure: true
+
+## Cert-manager integration for TLS certificates.
+## Required for webhook certificates and metrics endpoint certificates.
+##
+certManager:
+  enabled: false
+
+## Prometheus ServiceMonitor for metrics scraping.
+## Requires prometheus-operator to be installed in the cluster.
+##
+prometheus:
+  enabled: false
+
+## Network policies for controlling traffic flow.
+## Enable to restrict ingress to the controller manager.
+##
+networkPolicy:
+  enabled: false
+

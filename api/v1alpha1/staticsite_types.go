@@ -777,6 +777,14 @@ type StaticSiteStatus struct {
 	// +optional
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 
+	// nextSyncTime is the earliest the operator will start another sync after a
+	// failure. It backs off exponentially with failedSyncs, and exists so that a
+	// site whose syncs keep failing does not start a new Job every time the last
+	// one's status changes. It is cleared on success, and ignored when a sync is
+	// requested by annotation.
+	// +optional
+	NextSyncTime *metav1.Time `json:"nextSyncTime,omitempty"`
+
 	// lastSyncStats summarises the last successful sync.
 	// +optional
 	LastSyncStats *SyncStats `json:"lastSyncStats,omitempty"`
