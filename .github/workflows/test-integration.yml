@@ -1,7 +1,12 @@
 name: Integration Tests
 
 on:
+  # branches, not bare "push": a pull request from a branch in this repository
+  # fires both push and pull_request, which ran every check twice. Limiting push
+  # to main leaves one run per pull request and one per merge -- and stops a tag
+  # push from running CI at all, which the release workflow handles.
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
