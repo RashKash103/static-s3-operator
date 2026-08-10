@@ -10,8 +10,8 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-containerregistry v0.21.9
 	github.com/google/uuid v1.6.0
-	github.com/onsi/ginkgo/v2 v2.27.4
-	github.com/onsi/gomega v1.39.0
+	github.com/onsi/ginkgo/v2 v2.32.0
+	github.com/onsi/gomega v1.40.0
 	golang.org/x/sync v0.22.0
 	k8s.io/api v0.36.3
 	k8s.io/apiextensions-apiserver v0.36.3
@@ -54,7 +54,7 @@ require (
 	github.com/google/cel-go v0.26.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
+	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
