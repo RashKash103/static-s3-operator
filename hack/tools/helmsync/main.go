@@ -9,17 +9,21 @@ the Software without restriction. See the LICENSE file in the project root for
 the full license text.
 */
 
-// Command helmcrds copies the generated CRDs into the Helm chart's templates.
+// Command helmsync copies controller-gen's output into the Helm chart's templates.
 //
-// The Kubebuilder Helm plugin writes those templates, but only when the whole
-// chart is regenerated -- and regenerating the whole chart overwrites the
-// customisations this project keeps in it. The consequence, once, was a chart
-// shipping a CRD that still required a field the API had made optional: the
-// operator was correct, `make verify-generated` was happy, and installing the
-// chart rejected a valid manifest.
+// The Kubebuilder Helm plugin writes those templates, but only when the whole chart
+// is regenerated -- and regenerating the whole chart overwrites the customisations
+// this project keeps in it. So anything generated from the code has to be copied
+// into the chart separately, or the chart quietly falls behind the operator.
 //
-// So the CRDs are synced on their own, from the same source controller-gen
-// writes, every time `make manifests` runs.
+// That has happened twice. First a chart shipping a CRD that still required a field
+// the API had made optional, so installing the chart rejected a valid manifest.
+// Then a manager role missing a permission the operator had started needing, so the
+// operator would not start. In both cases the operator was right, the drift check
+// was happy, and the thing users install was broken.
+//
+// Two things are therefore synced on every `make manifests`: the CRDs, and the rules
+// of the manager role.
 package main
 
 import (
@@ -51,26 +55,103 @@ const (
 )
 
 func main() {
-	var sourceDir, targetDir string
+	var sourceDir, targetDir, roleSource, roleTarget string
 	var check bool
 	flag.StringVar(&sourceDir, "crd-dir", "config/crd/bases", "Directory holding the generated CRDs.")
 	flag.StringVar(&targetDir, "chart-crd-dir", "dist/chart/templates/crd",
 		"Directory of chart CRD templates to write.")
+	flag.StringVar(&roleSource, "role", "config/rbac/role.yaml", "The generated manager role.")
+	flag.StringVar(&roleTarget, "chart-role", "dist/chart/templates/rbac/manager-role.yaml",
+		"The chart's manager role template.")
 	flag.BoolVar(&check, "check", false,
 		"Report whether the chart is out of date instead of updating it.")
 	flag.Parse()
 
 	changed, err := run(sourceDir, targetDir, check)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "helmcrds: %v\n", err)
+		fmt.Fprintf(os.Stderr, "helmsync: %v\n", err)
 		os.Exit(1)
 	}
+
+	roleChanged, err := syncManagerRole(roleSource, roleTarget, check)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "helmsync: %v\n", err)
+		os.Exit(1)
+	}
+	if roleChanged {
+		changed = append(changed, filepath.Base(roleTarget))
+	}
+
 	if check && len(changed) > 0 {
 		fmt.Fprintf(os.Stderr,
-			"helmcrds: the chart's CRDs are out of date (%s). Run 'make manifests' and commit the result.\n",
+			"helmsync: the chart is out of date (%s). Run 'make manifests' and commit the result.\n",
 			strings.Join(changed, ", "))
 		os.Exit(1)
 	}
+}
+
+// rulesKey is the line the RBAC rules begin at in both files.
+const rulesKey = "rules:"
+
+// syncManagerRole replaces the chart role's rules with the generated ones.
+//
+// Only the rules are copied. The chart's own header stays untouched, because it
+// carries logic controller-gen knows nothing about -- whether the role is a Role or
+// a ClusterRole, and the templated name.
+func syncManagerRole(source, target string, check bool) (bool, error) {
+	generated, err := os.ReadFile(source) //nolint:gosec // generated input under the repository
+	if err != nil {
+		return false, fmt.Errorf("read %q: %w", source, err)
+	}
+	existing, err := os.ReadFile(target) //nolint:gosec // generated output under the repository
+	if err != nil {
+		return false, fmt.Errorf("read %q: %w", target, err)
+	}
+
+	rules, err := rulesBlock(generated)
+	if err != nil {
+		return false, fmt.Errorf("%q: %w", source, err)
+	}
+	header, err := headerBlock(existing)
+	if err != nil {
+		return false, fmt.Errorf("%q: %w", target, err)
+	}
+
+	wanted := []byte(header + rules)
+	if bytes.Equal(existing, wanted) {
+		return false, nil
+	}
+	if check {
+		return true, nil
+	}
+
+	if err := os.WriteFile(target, wanted, 0o644); err != nil { //nolint:gosec // generated output
+		return false, fmt.Errorf("write %q: %w", target, err)
+	}
+	fmt.Printf("synced %s\n", target)
+	return true, nil
+}
+
+// rulesBlock returns everything from the "rules:" line onward.
+func rulesBlock(document []byte) (string, error) {
+	lines := strings.Split(strings.TrimRight(string(document), "\n"), "\n")
+	for i, line := range lines {
+		if line == rulesKey {
+			return strings.Join(lines[i:], "\n") + "\n", nil
+		}
+	}
+	return "", fmt.Errorf("no %q line found", rulesKey)
+}
+
+// headerBlock returns everything up to and including the "rules:" line.
+func headerBlock(document []byte) (string, error) {
+	lines := strings.Split(strings.TrimRight(string(document), "\n"), "\n")
+	for i, line := range lines {
+		if line == rulesKey {
+			return strings.Join(lines[:i], "\n") + "\n", nil
+		}
+	}
+	return "", fmt.Errorf("no %q line found", rulesKey)
 }
 
 func run(sourceDir, targetDir string, check bool) ([]string, error) {

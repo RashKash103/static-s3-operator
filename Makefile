@@ -52,9 +52,18 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 	@# CRD the operator no longer matches.
 	$(MAKE) --no-print-directory helm-crds
 
+.PHONY: bucket-name
+bucket-name: ## Print the bucket name a StaticSite will get. NAMESPACE=web NAME=docs [CLUSTER_UUID=...]
+	@test -n "$(NAMESPACE)" || { echo "Set NAMESPACE, e.g. make bucket-name NAMESPACE=web NAME=docs"; exit 1; }
+	@test -n "$(NAME)" || { echo "Set NAME, e.g. make bucket-name NAMESPACE=web NAME=docs"; exit 1; }
+	@go run ./hack/tools/bucketname \
+		--namespace "$(NAMESPACE)" --name "$(NAME)" \
+		$(if $(CLUSTER_UUID),--cluster-uuid "$(CLUSTER_UUID)") \
+		$(if $(BUCKET_NAME_TEMPLATE),--template "$(BUCKET_NAME_TEMPLATE)")
+
 .PHONY: helm-crds
 helm-crds: ## Sync the generated CRDs into the Helm chart's templates.
-	go run ./hack/tools/helmcrds --crd-dir config/crd/bases --chart-crd-dir dist/chart/templates/crd
+	go run ./hack/tools/helmsync --crd-dir config/crd/bases --chart-crd-dir dist/chart/templates/crd
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -125,7 +134,7 @@ SCHEMA_ID_PREFIX ?= https://raw.githubusercontent.com/rashkash103/static-s3-oper
 
 .PHONY: verify-generated
 verify-generated: manifests generate schemas build-installer ## Fail if generated files are out of date.
-	go run ./hack/tools/helmcrds --check
+	go run ./hack/tools/helmsync --check
 	@if [ -n "$$(git status --porcelain -- config dist api)" ]; then \
 		echo "Generated files are out of date. Run 'make manifests generate schemas build-installer' and commit the result:"; \
 		git --no-pager diff -- config dist api; \
