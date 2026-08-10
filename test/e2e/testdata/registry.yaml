@@ -1,0 +1,63 @@
+# An in-cluster container registry for the end-to-end tests.
+#
+# The sync Job pulls the site image over the registry API, not from the node's
+# image store, so `kind load docker-image` is not enough: the tests need a
+# registry the Job's Pod can actually reach. This one is plain HTTP, which is why
+# the test StaticSite sets spec.source.plainHTTP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: static-s3-e2e
+  labels:
+    app: registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: registry
+          image: registry:3
+          env:
+            # Deleting a tag is how the suite rewrites a mutable tag between
+            # publishes, so the delete API has to be on.
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+          ports:
+            - containerPort: 5000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: static-s3-e2e
+spec:
+  selector:
+    app: registry
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000

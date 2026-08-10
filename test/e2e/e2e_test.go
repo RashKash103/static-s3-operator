@@ -1,339 +1,457 @@
 //go:build e2e
-// +build e2e
 
 /*
 Copyright 2026 rashkash103.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+SPDX-License-Identifier: MIT
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction. See the LICENSE file in the project root for
+the full license text.
 */
 
 package e2e
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/rashkash103/static-s3-operator/test/utils"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+
+	operators3 "github.com/rashkash103/static-s3-operator/internal/s3"
 )
 
-// namespace where the project is deployed in
-const namespace = "static-s3-operator-system"
+const (
+	readyTimeout = 5 * time.Minute
+	syncTimeout  = 5 * time.Minute
+)
 
-// serviceAccountName created for the project
-const serviceAccountName = "static-s3-operator-controller-manager"
+var _ = Describe("StaticSite", Ordered, func() {
+	// One bucket and one site name for the whole publish-and-republish story, so
+	// the second publish exercises an existing bucket rather than a fresh one.
+	var (
+		siteName = "sample-site"
+		bucket   = "e2e-sample-site"
+		// imageRef is the in-cluster reference the operator resolves and the sync Job
+		// pulls; pushRef is the same repository through the port-forward.
+		imageRef = registryHost + "/sample-site:latest"
+		pushRef  = localRegistry + "/sample-site:latest"
+	)
 
-// metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "static-s3-operator-controller-manager-metrics-service"
+	// staticSiteManifest describes the site under test. It sets plainHTTP because
+	// the in-cluster registry has no TLS, and excludes source maps to check that
+	// spec.sync.excludes keeps a file out of the bucket.
+	staticSiteManifest := func() string {
+		return fmt.Sprintf(`
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  source:
+    image: %s
+    plainHTTP: true
+    # Polling off: the specs republish and then ask for a sync explicitly, which
+    # keeps the run deterministic instead of waiting on an interval.
+    pullInterval: "0"
+  bucket:
+    name: %s
+    website:
+      indexDocument: index.html
+      errorDocument: 404.html
+  sync:
+    deleteRemoved: true
+    excludes:
+      - "**/*.map"
+    cacheControl:
+      - pattern: "assets/**"
+        value: "public, max-age=31536000, immutable"
+      - pattern: "**/*.html"
+        value: "public, max-age=0, must-revalidate"
+  service:
+    enabled: true
+    hostnames:
+      - sample.e2e.example.com
+`, siteName, e2eNamespace, imageRef, bucket)
+	}
 
-// metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "static-s3-operator-metrics-binding"
-
-var _ = Describe("Manager", Ordered, func() {
-	var controllerPodName string
-
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
 	BeforeAll(func() {
-		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace)
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
+		By("publishing the first version of the sample site")
+		image, err := buildSiteImage(sampleSite("v1"))
+		Expect(err).NotTo(HaveOccurred())
 
-		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
-			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+		digest, err := pushSiteImage(pushRef, image)
+		Expect(err).NotTo(HaveOccurred())
+		_, _ = fmt.Fprintf(GinkgoWriter, "pushed %s at %s\n", pushRef, digest)
 
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		By("creating the StaticSite")
+		applyManifest(staticSiteManifest())
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
 	AfterAll(func() {
-		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = utils.Run(cmd)
+		By("dumping the StaticSite for diagnosis")
+		output, _ := kubectl("get", "staticsite", siteName, "-n", e2eNamespace, "-o", "yaml")
+		_, _ = fmt.Fprintf(GinkgoWriter, "--- StaticSite %s ---\n%s\n", siteName, output)
 
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
-
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = utils.Run(cmd)
+		By("deleting the StaticSite")
+		_, _ = kubectl("delete", "staticsite", siteName, "-n", e2eNamespace, "--wait=true", "--timeout=3m")
 	})
 
-	// After each test, check for failures and collect logs, events,
-	// and pod descriptions for debugging.
-	AfterEach(func() {
-		specReport := CurrentSpecReport()
-		if specReport.Failed() {
-			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-			controllerLogs, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
-			}
+	It("becomes Ready", func() {
+		waitForSiteReady(siteName, readyTimeout)
 
-			By("Fetching Kubernetes events")
-			cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
-			eventsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
-			}
+		By("reporting the bucket it created")
+		Eventually(func(g Gomega) {
+			name, err := siteField(siteName, "{.status.bucketName}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(name).To(Equal(bucket))
+		}, readyTimeout, 2*time.Second).Should(Succeed())
 
-			By("Fetching curl-metrics logs")
-			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
-			metricsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
-			}
+		By("recording an ownership token, which is what will permit deletion")
+		token, err := siteField(siteName, "{.status.bucketOwnership.token}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(token).NotTo(BeEmpty())
 
-			By("Fetching controller manager pod description")
-			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
-			podDescription, err := utils.Run(cmd)
-			if err == nil {
-				fmt.Println("Pod description:\n", podDescription)
-			} else {
-				fmt.Println("Failed to describe controller pod")
-			}
+		created, err := siteField(siteName, "{.status.bucketOwnership.created}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(Equal("true"))
+
+		By("reporting a website URL")
+		url, err := siteField(siteName, "{.status.websiteURL}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(url).To(ContainSubstring(bucket))
+	})
+
+	It("creates the bucket and uploads the site", func() {
+		Expect(bucketExists(bucket)).To(BeTrue(), "the operator should have created the bucket")
+
+		keys := bucketKeys(bucket)
+		_, _ = fmt.Fprintf(GinkgoWriter, "bucket contents: %v\n", keys)
+
+		for _, key := range []string{
+			"index.html",
+			"about/index.html",
+			"404.html",
+			"assets/app.css",
+			"assets/app.js",
+			"robots.txt",
+		} {
+			Expect(keys).To(ContainElement(key), "object %q should be in the bucket", key)
 		}
+
+		By("honouring spec.sync.excludes")
+		Expect(keys).NotTo(ContainElement("assets/app.js.map"),
+			"an excluded file should never be uploaded")
 	})
 
-	SetDefaultEventuallyTimeout(2 * time.Minute)
-	SetDefaultEventuallyPollingInterval(time.Second)
+	It("serves the site to an anonymous visitor", func() {
+		// The assertion that cannot pass by accident: the bucket, its policy, the
+		// extracted image, the uploaded objects and their content types all have to be
+		// right for this to return the page.
+		body, status, headers, err := httpGet(objectURL(bucket, "index.html"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200), "an anonymous GET should succeed; body: %s", body)
+		Expect(body).To(ContainSubstring("Sample site v1"))
+		Expect(headers.Get("Content-Type")).To(HavePrefix("text/html"),
+			"a wrong content type makes the browser download the page instead of rendering it")
 
-	Context("Manager", func() {
-		It("should run successfully", func() {
-			By("validating that the controller-manager pod is running as expected")
-			verifyControllerUp := func(g Gomega) {
-				By("getting the name of the controller-manager pod")
-				cmd := exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
-					"-o", "go-template={{ range .items }}"+
-						"{{ if not .metadata.deletionTimestamp }}"+
-						"{{ .metadata.name }}"+
-						"{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", namespace,
-				)
+		By("serving nested pages and assets")
+		body, status, headers, err = httpGet(objectURL(bucket, "about/index.html"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200))
+		Expect(body).To(ContainSubstring("About"))
 
-				podOutput, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
-				podNames := utils.GetNonEmptyLines(podOutput)
-				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
-				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+		body, status, headers, err = httpGet(objectURL(bucket, "assets/app.css"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200))
+		Expect(headers.Get("Content-Type")).To(HavePrefix("text/css"))
+		Expect(body).To(ContainSubstring("font-family"))
+	})
 
-				By("validating the pod's status")
-				cmd = exec.Command("kubectl", "get",
-					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
-					"-n", namespace,
-				)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Running"), "Incorrect controller-manager pod status")
+	It("applies the Cache-Control rules", func() {
+		_, status, headers, err := httpGet(objectURL(bucket, "assets/app.css"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200))
+		Expect(headers.Get("Cache-Control")).To(Equal("public, max-age=31536000, immutable"))
+
+		_, status, headers, err = httpGet(objectURL(bucket, "index.html"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200))
+		Expect(headers.Get("Cache-Control")).To(Equal("public, max-age=0, must-revalidate"))
+	})
+
+	It("maintains an ExternalName Service for external-dns", func() {
+		Eventually(func(g Gomega) {
+			serviceType, err := kubectl("get", "service", siteName, "-n", e2eNamespace,
+				"-o", "jsonpath={.spec.type}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(serviceType).To(Equal("ExternalName"))
+		}, readyTimeout, 2*time.Second).Should(Succeed())
+
+		externalName, err := kubectl("get", "service", siteName, "-n", e2eNamespace,
+			"-o", "jsonpath={.spec.externalName}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(externalName).To(Equal("minio." + e2eNamespace + ".svc.cluster.local"))
+
+		By("rendering the hostnames into the external-dns annotation")
+		annotation, err := kubectl("get", "service", siteName, "-n", e2eNamespace,
+			"-o", `jsonpath={.metadata.annotations.external-dns\.alpha\.kubernetes\.io/hostname}`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(annotation).To(Equal("sample.e2e.example.com"))
+	})
+
+	It("records what the sync did", func() {
+		uploaded, err := siteField(siteName, "{.status.lastSyncStats.uploaded}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(uploaded).NotTo(BeEmpty(), "the sync Job's report should reach status")
+
+		digest, err := siteField(siteName, "{.status.syncedDigest}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(digest).To(HavePrefix("sha256:"))
+
+		succeeded, err := siteField(siteName, "{.status.syncHistory[0].succeeded}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(succeeded).To(Equal("true"))
+	})
+
+	It("does nothing when nothing has changed", func() {
+		// A site that is already up to date must not re-upload, or a daily poll would
+		// cost as much as a full publish.
+		before, err := siteField(siteName, "{.status.lastSyncTime}")
+		Expect(err).NotTo(HaveOccurred())
+
+		Consistently(func(g Gomega) {
+			after, err := siteField(siteName, "{.status.lastSyncTime}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(after).To(Equal(before))
+		}, 30*time.Second, 5*time.Second).Should(Succeed())
+	})
+
+	It("republishes when the tag moves, and mirrors the new contents", func() {
+		By("pushing a second version over the same tag")
+		// A changed file, a new file and a removed file: enough to tell a mirror from
+		// an accumulation.
+		image, err := buildSiteImage(sampleSiteV2())
+		Expect(err).NotTo(HaveOccurred())
+
+		newDigest, err := pushSiteImage(pushRef, image)
+		Expect(err).NotTo(HaveOccurred())
+		_, _ = fmt.Fprintf(GinkgoWriter, "pushed v2 at %s\n", newDigest)
+
+		By("asking for a sync")
+		_, err = kubectl("annotate", "staticsite", siteName, "-n", e2eNamespace,
+			"web.rka.sh/sync-requested-at="+time.Now().UTC().Format(time.RFC3339Nano), "--overwrite")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("waiting for the new digest to be synced")
+		Eventually(func(g Gomega) {
+			synced, err := siteField(siteName, "{.status.syncedDigest}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(synced).To(Equal(newDigest))
+		}, syncTimeout, 3*time.Second).Should(Succeed())
+		waitForSiteReady(siteName, readyTimeout)
+
+		By("serving the updated page")
+		Eventually(func(g Gomega) {
+			body, status, _, err := httpGet(objectURL(bucket, "index.html"))
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(status).To(Equal(200))
+			g.Expect(body).To(ContainSubstring("Sample site v2"))
+		}, syncTimeout, 3*time.Second).Should(Succeed())
+
+		By("uploading the new file")
+		keys := bucketKeys(bucket)
+		Expect(keys).To(ContainElement("new-page.html"))
+
+		By("deleting the file that is no longer in the image")
+		Expect(keys).NotTo(ContainElement("404.html"),
+			"deleteRemoved should have removed the page that v2 dropped")
+
+		_, status, _, err := httpGet(objectURL(bucket, "404.html"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(404), "the removed page should no longer be served")
+	})
+
+	It("prunes old sync Jobs", func() {
+		Eventually(func(g Gomega) {
+			output, err := kubectl("get", "jobs", "-n", e2eNamespace,
+				"-l", "web.rka.sh/staticsite="+siteName, "-o", "name")
+			g.Expect(err).NotTo(HaveOccurred())
+
+			count := 0
+			for _, line := range strings.Split(output, "\n") {
+				if strings.TrimSpace(line) != "" {
+					count++
+				}
 			}
-			Eventually(verifyControllerUp).Should(Succeed())
-		})
+			// spec.sync.retainHistory defaults to 3.
+			g.Expect(count).To(BeNumerically("<=", 4), "sync Jobs should be pruned, found:\n%s", output)
+		}, 2*time.Minute, 5*time.Second).Should(Succeed())
+	})
 
-		It("should ensure the metrics endpoint is serving metrics", func() {
-			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
-			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=static-s3-operator-metrics-reader",
-				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
-			)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ClusterRoleBinding")
+	It("deletes the bucket it created when the StaticSite goes away", func() {
+		Expect(bucketExists(bucket)).To(BeTrue())
 
-			By("validating that the metrics service is available")
-			cmd = exec.Command("kubectl", "get", "service", metricsServiceName, "-n", namespace)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
+		_, err := kubectl("delete", "staticsite", siteName, "-n", e2eNamespace,
+			"--wait=true", "--timeout=3m")
+		Expect(err).NotTo(HaveOccurred())
 
-			By("getting the service account token")
-			token, err := serviceAccountToken()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(token).NotTo(BeEmpty())
+		Eventually(func() bool {
+			return bucketExists(bucket)
+		}, 3*time.Minute, 3*time.Second).Should(BeFalse(),
+			"the bucket should be deleted along with the StaticSite")
 
-			By("ensuring the controller pod is ready")
-			verifyControllerPodReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pod", controllerPodName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("True"), "Controller pod not ready")
-			}
-			Eventually(verifyControllerPodReady, 3*time.Minute, time.Second).Should(Succeed())
-
-			By("verifying that the controller manager is serving the metrics server")
-			verifyMetricsServerStarted := func(g Gomega) {
-				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("Serving metrics server"),
-					"Metrics server not yet started")
-			}
-			Eventually(verifyMetricsServerStarted, 3*time.Minute, time.Second).Should(Succeed())
-
-			// +kubebuilder:scaffold:e2e-metrics-webhooks-readiness
-
-			By("creating the curl-metrics pod to access the metrics endpoint")
-			cmd = exec.Command("kubectl", "run", "curl-metrics", "--restart=Never",
-				"--namespace", namespace,
-				"--image=curlimages/curl:latest",
-				"--overrides",
-				fmt.Sprintf(`{
-					"spec": {
-						"containers": [{
-							"name": "curl",
-							"image": "curlimages/curl:latest",
-							"command": ["/bin/sh", "-c"],
-							"args": [
-								"for i in $(seq 1 30); do curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics && exit 0 || sleep 2; done; exit 1"
-							],
-							"securityContext": {
-								"readOnlyRootFilesystem": true,
-								"allowPrivilegeEscalation": false,
-								"capabilities": {
-									"drop": ["ALL"]
-								},
-								"runAsNonRoot": true,
-								"runAsUser": 1000,
-								"seccompProfile": {
-									"type": "RuntimeDefault"
-								}
-							}
-						}],
-						"serviceAccountName": "%s"
-					}
-				}`, token, metricsServiceName, namespace, serviceAccountName))
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
-
-			By("waiting for the curl-metrics pod to complete.")
-			verifyCurlUp := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "curl-metrics",
-					"-o", "jsonpath={.status.phase}",
-					"-n", namespace)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Succeeded"), "curl pod in wrong status")
-			}
-			Eventually(verifyCurlUp, 5*time.Minute).Should(Succeed())
-
-			By("getting the metrics by checking curl-metrics logs")
-			verifyMetricsAvailable := func(g Gomega) {
-				metricsOutput, err := getMetricsOutput()
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-				g.Expect(metricsOutput).NotTo(BeEmpty())
-				g.Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
-			}
-			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
-		})
-
-		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		By("removing the ExternalName Service with it")
+		Eventually(func() string {
+			output, _ := kubectl("get", "service", siteName, "-n", e2eNamespace, "--ignore-not-found")
+			return output
+		}, time.Minute, 2*time.Second).Should(BeEmpty())
 	})
 })
 
-// serviceAccountToken returns a token for the specified service account in the given namespace.
-// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
-// and parsing the resulting token from the API response.
-func serviceAccountToken() (string, error) {
-	const tokenRequestRawString = `{
-		"apiVersion": "authentication.k8s.io/v1",
-		"kind": "TokenRequest"
-	}`
+var _ = Describe("bucket ownership", Ordered, func() {
+	// The safety property that matters most: a bucket the operator did not create
+	// must survive deletion of the StaticSite that pointed at it, whatever the
+	// deletion policy says.
+	const (
+		siteName = "adopted-site"
+		bucket   = "e2e-preexisting-bucket"
+	)
 
-	By("creating temporary file to store the token request")
-	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
-	tokenRequestFile := filepath.Join("/tmp", secretName)
-	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
-	if err != nil {
-		return "", err
-	}
+	imageRef := registryHost + "/adopted-site:latest"
+	pushRef := localRegistry + "/adopted-site:latest"
 
-	var out string
-	verifyTokenCreation := func(g Gomega) {
-		By("executing kubectl command to create the token")
-		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
-			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
-			namespace,
-			serviceAccountName,
-		), "-f", tokenRequestFile)
+	BeforeAll(func() {
+		By("creating a bucket by hand, as if it belonged to somebody else")
+		manager := operators3.NewBucketManager(s3Client())
+		_, err := manager.Create(context.Background(), bucket, "us-east-1")
+		Expect(err).NotTo(HaveOccurred())
 
-		output, err := cmd.CombinedOutput()
-		g.Expect(err).NotTo(HaveOccurred())
+		By("putting an object in it that the operator must not destroy")
+		_, err = s3Client().PutObject(context.Background(), &awss3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String("pre-existing.txt"),
+			Body:   strings.NewReader("this file was here first"),
+		})
+		Expect(err).NotTo(HaveOccurred())
 
-		By("parsing the JSON output to extract the token")
-		var token tokenRequest
-		err = json.Unmarshal(output, &token)
-		g.Expect(err).NotTo(HaveOccurred())
+		By("publishing a site image")
+		image, err := buildSiteImage(sampleSite("adopted"))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pushSiteImage(pushRef, image)
+		Expect(err).NotTo(HaveOccurred())
 
-		out = token.Status.Token
-	}
-	Eventually(verifyTokenCreation).Should(Succeed())
+		By("pointing a StaticSite at the existing bucket, with deletionPolicy Delete")
+		applyManifest(fmt.Sprintf(`
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  source:
+    image: %s
+    plainHTTP: true
+    pullInterval: "0"
+  bucket:
+    name: %s
+    # Deliberately the destructive policy: adoption has to override it.
+    deletionPolicy: Delete
+    website:
+      indexDocument: index.html
+  sync:
+    # The pre-existing object must not be treated as site content to remove.
+    deleteRemoved: false
+  service:
+    enabled: false
+`, siteName, e2eNamespace, imageRef, bucket))
+	})
 
-	return out, err
-}
+	AfterAll(func() {
+		_, _ = kubectl("delete", "staticsite", siteName, "-n", e2eNamespace,
+			"--ignore-not-found", "--wait=true", "--timeout=3m")
+		manager := operators3.NewBucketManager(s3Client())
+		_, _ = manager.Delete(context.Background(), bucket)
+	})
 
-// getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
-func getMetricsOutput() (string, error) {
-	By("getting the curl-metrics logs")
-	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
-	return utils.Run(cmd)
-}
+	It("adopts the bucket without claiming ownership", func() {
+		waitForSiteReady(siteName, readyTimeout)
 
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
-type tokenRequest struct {
-	Status struct {
-		Token string `json:"token"`
-	} `json:"status"`
-}
+		token, err := siteField(siteName, "{.status.bucketOwnership.token}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(token).To(BeEmpty(), "an adopted bucket must not get an ownership token")
+	})
+
+	It("still publishes the site into it", func() {
+		keys := bucketKeys(bucket)
+		Expect(keys).To(ContainElement("index.html"))
+		Expect(keys).To(ContainElement("pre-existing.txt"),
+			"the object that was there first should be untouched")
+	})
+
+	It("refuses to delete the bucket when the StaticSite is deleted", func() {
+		_, err := kubectl("delete", "staticsite", siteName, "-n", e2eNamespace,
+			"--wait=true", "--timeout=3m")
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(bucketExists(bucket)).To(BeTrue(),
+			"a bucket the operator did not create must never be deleted")
+		Expect(bucketKeys(bucket)).To(ContainElement("pre-existing.txt"),
+			"and its contents must be intact")
+	})
+})
+
+var _ = Describe("failure reporting", func() {
+	It("reports an image that does not exist without wedging", func() {
+		const siteName = "missing-image-site"
+
+		applyManifest(fmt.Sprintf(`
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  source:
+    image: %s/does-not-exist:nope
+    plainHTTP: true
+  bucket:
+    name: e2e-missing-image
+  service:
+    enabled: false
+`, siteName, e2eNamespace, registryHost))
+
+		DeferCleanup(func() {
+			_, _ = kubectl("delete", "staticsite", siteName, "-n", e2eNamespace,
+				"--ignore-not-found", "--wait=true", "--timeout=3m")
+		})
+
+		By("reporting the failure against SourceResolved")
+		Eventually(func(g Gomega) {
+			status, err := siteField(siteName,
+				`{.status.conditions[?(@.type=="SourceResolved")].status}`)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(status).To(Equal("False"))
+		}, readyTimeout, 3*time.Second).Should(Succeed())
+
+		By("having created the bucket anyway, since that stage succeeded")
+		Eventually(func(g Gomega) {
+			status, err := siteField(siteName, `{.status.conditions[?(@.type=="BucketReady")].status}`)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(status).To(Equal("True"))
+		}, readyTimeout, 3*time.Second).Should(Succeed())
+
+		By("still deleting cleanly")
+		_, err := kubectl("delete", "staticsite", siteName, "-n", e2eNamespace,
+			"--wait=true", "--timeout=3m")
+		Expect(err).NotTo(HaveOccurred())
+	})
+})

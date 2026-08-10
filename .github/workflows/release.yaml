@@ -1,0 +1,257 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to publish, including the leading v (for example v0.2.0).
+          Only needed for a manual run; a tag push takes the version from the tag.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  # ghcr.io requires a lowercase path, and a repository owner may not be.
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  version:
+    name: Resolve the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      chart_version: ${{ steps.resolve.outputs.chart_version }}
+      image_repository: ${{ steps.resolve.outputs.image_repository }}
+      chart_repository: ${{ steps.resolve.outputs.chart_repository }}
+    steps:
+      - id: resolve
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+
+          # A Helm chart version is semver without the leading v.
+          chart_version="${version#v}"
+
+          if ! printf '%s' "$chart_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$version' is not a semver tag like v1.2.3"
+            exit 1
+          fi
+
+          owner_lower="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          repo_lower="$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+
+          {
+            echo "version=$version"
+            echo "chart_version=$chart_version"
+            echo "image_repository=ghcr.io/$repo_lower"
+            # Charts live under a charts/ path so they never collide with the image.
+            echo "chart_repository=oci://ghcr.io/$owner_lower/charts"
+          } >> "$GITHUB_OUTPUT"
+
+  image:
+    name: Publish the container image
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Needed to attach a build provenance attestation to the published image.
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.version.outputs.image_repository }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.version.outputs.version }}
+            type=raw,value=latest,enable=${{ !contains(needs.version.outputs.version, '-') }}
+          labels: |
+            org.opencontainers.image.title=static-s3-operator
+            org.opencontainers.image.description=Host a static website from an S3 bucket, sourced from a container image
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # The operator runs on whatever the cluster's nodes are, so both common
+          # architectures are published.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ needs.version.outputs.image_repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  chart:
+    name: Publish the Helm chart
+    needs: [version, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+
+      - name: Log in to ghcr.io
+        # Helm's OCI support uses the same registry credentials as Docker.
+        run: |
+          echo '${{ secrets.GITHUB_TOKEN }}' \
+            | helm registry login ghcr.io --username '${{ github.actor }}' --password-stdin
+
+      - name: Pin the chart to this release
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          CHART_VERSION: ${{ needs.version.outputs.chart_version }}
+          IMAGE_REPOSITORY: ${{ needs.version.outputs.image_repository }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          # The chart ships pinned to the digest that was just built and attested,
+          # so installing the chart cannot pick up a different image than the one
+          # this release tested.
+          helm_set_image="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+
+          python3 - "$CHART_VERSION" "$VERSION" "$helm_set_image" <<'PY'
+          import pathlib, re, sys
+
+          chart_version, app_version, image = sys.argv[1:4]
+
+          chart = pathlib.Path("dist/chart/Chart.yaml")
+          text = chart.read_text()
+          text = re.sub(r"^version: .*$", f"version: {chart_version}", text, flags=re.M)
+          text = re.sub(r"^appVersion: .*$", f'appVersion: "{app_version}"', text, flags=re.M)
+          chart.write_text(text)
+
+          values = pathlib.Path("dist/chart/values.yaml")
+          text = values.read_text()
+          # The repository carries the digest, and the manager template omits the
+          # tag when the repository already contains an "@".
+          text = re.sub(r"^(\s*)repository: controller$", rf"\g<1>repository: {image}", text, flags=re.M)
+          values.write_text(text)
+          PY
+
+          echo "--- Chart.yaml ---"
+          cat dist/chart/Chart.yaml
+          echo "--- image in values.yaml ---"
+          grep -n "repository:" dist/chart/values.yaml
+
+      - name: Lint the pinned chart
+        run: |
+          helm lint dist/chart
+          helm template static-s3-operator dist/chart >/dev/null
+
+      - name: Package and push the chart
+        env:
+          CHART_REPOSITORY: ${{ needs.version.outputs.chart_repository }}
+        run: |
+          set -euo pipefail
+          helm package dist/chart --destination dist/packaged
+          package="$(ls dist/packaged/static-s3-operator-*.tgz)"
+          echo "Pushing $package to $CHART_REPOSITORY"
+          helm push "$package" "$CHART_REPOSITORY"
+
+      - name: Upload the packaged chart
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: dist/packaged/*.tgz
+
+  installer:
+    name: Publish the release artifacts
+    needs: [version, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the kustomize installer
+        env:
+          IMAGE_REPOSITORY: ${{ needs.version.outputs.image_repository }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+        # A single-file install for people who would rather not use Helm, pinned to
+        # the same digest as the chart.
+        run: make build-installer IMG="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+
+      - name: Regenerate the CRD JSON Schemas
+        run: make schemas
+
+      - name: Attach the artifacts to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/install.yaml
+            dist/schemas/*.json
+          body: |
+            ## Install
+
+            ```sh
+            helm install static-s3-operator \
+              ${{ needs.version.outputs.chart_repository }}/static-s3-operator \
+              --version ${{ needs.version.outputs.chart_version }} \
+              --namespace static-s3-operator-system --create-namespace \
+              --set operator.credentials.existingSecret=my-s3-credentials
+            ```
+
+            Or without Helm:
+
+            ```sh
+            kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ needs.version.outputs.version }}/install.yaml
+            ```
+
+            The image is pinned by digest in both:
+            `${{ needs.version.outputs.image_repository }}@${{ needs.image.outputs.digest }}`
+
+            > [!WARNING]
+            > This project was generated with AI. Review it before running it
+            > anywhere you care about, and see the README for what that means.

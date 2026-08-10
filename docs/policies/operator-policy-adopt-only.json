@@ -1,0 +1,40 @@
+{
+  "Version": "2012-10-17",
+  "Id": "static-s3-operator-adopt-only",
+  "Statement": [
+    {
+      "Sid": "ConfigureExistingBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads",
+        "s3:GetBucketLocation",
+        "s3:GetBucketPolicy",
+        "s3:PutBucketPolicy",
+        "s3:GetBucketWebsite",
+        "s3:PutBucketWebsite",
+        "s3:GetBucketTagging"
+      ],
+      "Resource": [
+        "arn:aws:s3:::my-first-site",
+        "arn:aws:s3:::my-second-site"
+      ]
+    },
+    {
+      "Sid": "ManageSiteObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectAcl",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": [
+        "arn:aws:s3:::my-first-site/*",
+        "arn:aws:s3:::my-second-site/*"
+      ]
+    }
+  ]
+}

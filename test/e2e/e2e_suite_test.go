@@ -1,22 +1,27 @@
 //go:build e2e
-// +build e2e
 
 /*
 Copyright 2026 rashkash103.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+SPDX-License-Identifier: MIT
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction. See the LICENSE file in the project root for
+the full license text.
 */
 
+// Package e2e drives the operator in a real cluster, against a real object store
+// and a real container registry.
+//
+// The suite deliberately reaches the finished site the way a visitor would, with
+// an unauthenticated HTTP GET against the bucket. Everything before that -- the
+// bucket, its policy, the extracted image, the uploaded objects, their content
+// types -- has to be right for that request to return the page, so it is the one
+// assertion that cannot pass by accident.
+//
+// Requires Kind and Docker. Run it with `make test-e2e`, which creates a
+// throwaway cluster and deletes it afterwards.
 package e2e
 
 import (
@@ -24,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,19 +37,42 @@ import (
 	"github.com/rashkash103/static-s3-operator/test/utils"
 )
 
-var (
-	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/static-s3-operator:v0.0.1"
-	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
-	shouldCleanupCertManager = false
+const (
+	// managerImage is the operator image built and loaded for the run. It carries
+	// the syncer too, which is what sync Jobs run.
+	managerImage = "example.com/static-s3-operator:e2e"
+
+	// operatorNamespace is where the chart installs the operator.
+	operatorNamespace = "static-s3-operator-system"
+	// helmRelease is the release name used for the install.
+	helmRelease = "static-s3-operator"
+
+	// e2eNamespace holds the object store, the registry and the test sites.
+	e2eNamespace = "static-s3-e2e"
+
+	// The in-cluster addresses the operator and its Jobs use.
+	minioEndpoint  = "http://minio." + e2eNamespace + ".svc.cluster.local:9000"
+	registryHost   = "registry." + e2eNamespace + ".svc.cluster.local:5000"
+	minioAccessKey = "minioadmin"
+	minioSecretKey = "minioadmin"
+
+	// Local ports the suite forwards to, so it can push images and fetch pages
+	// from outside the cluster.
+	localRegistryPort = 15000
+	localMinIOPort    = 19000
 )
 
-// TestE2E runs the e2e test suite to validate the solution in an isolated environment.
-// The default setup requires Kind and CertManager.
-//
-// To enable kubectl kuberc (use custom kubectl configurations), set: KUBECTL_KUBERC=true
-// By default, kuberc is disabled to ensure consistent test behavior across different environments.
-// To skip CertManager installation, set: CERT_MANAGER_INSTALL_SKIP=true
+var (
+	// localRegistry and localMinIO are the forwarded addresses of the in-cluster
+	// registry and object store.
+	localRegistry = fmt.Sprintf("127.0.0.1:%d", localRegistryPort)
+	localMinIO    = fmt.Sprintf("http://127.0.0.1:%d", localMinIOPort)
+
+	registryForward *portForward
+	minioForward    *portForward
+)
+
+// TestE2E runs the end-to-end suite against an isolated Kind cluster.
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting static-s3-operator e2e test suite\n")
@@ -51,69 +80,123 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
+	// Local kubectl preferences would otherwise change how these commands behave.
+	if os.Getenv("KUBECTL_KUBERC") != "true" {
+		Expect(os.Setenv("KUBECTL_KUBERC", "false")).To(Succeed())
+	}
 
-	// TODO(user): If you want to change the e2e test vendor from Kind,
-	// ensure the image is built and available, then remove the following block.
-	By("loading the manager image on Kind")
-	err = utils.LoadImageToKindClusterWithName(managerImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+	By("building the operator image")
+	_, err := utils.Run(exec.Command("make", "docker-build", "IMG="+managerImage))
+	Expect(err).NotTo(HaveOccurred(), "failed to build the operator image")
 
-	configureKubectlKubeRC()
-	setupCertManager()
+	By("loading the operator image into the Kind cluster")
+	Expect(utils.LoadImageToKindClusterWithName(managerImage)).To(Succeed())
+
+	By("creating the test namespace")
+	_, _ = utils.Run(exec.Command("kubectl", "create", "namespace", e2eNamespace))
+
+	By("deploying an object store and a registry into the cluster")
+	// The sync Job pulls the site image over the registry API from inside the
+	// cluster, so a registry the Pod can reach is not optional here.
+	applyTestData("minio.yaml")
+	applyTestData("registry.yaml")
+
+	By("waiting for the object store and registry to become available")
+	waitForDeployment("minio")
+	waitForDeployment("registry")
+
+	By("installing the operator with Helm")
+	installOperator()
+
+	By("forwarding the registry and the object store to localhost")
+	registryForward = startPortForward("svc/registry", localRegistryPort, 5000)
+	minioForward = startPortForward("svc/minio", localMinIOPort, 9000)
+
+	// A forward that is not ready yet fails the first push in a way that looks like
+	// a registry problem, so it is worth waiting for explicitly.
+	waitForEndpoint(fmt.Sprintf("http://%s/v2/", localRegistry))
+	waitForEndpoint(localMinIO + "/minio/health/live")
 })
 
 var _ = AfterSuite(func() {
-	teardownCertManager()
+	if registryForward != nil {
+		registryForward.stop()
+	}
+	if minioForward != nil {
+		minioForward.stop()
+	}
+
+	By("collecting operator logs")
+	dumpOperatorLogs()
+
+	By("uninstalling the operator")
+	_, _ = utils.Run(exec.Command("helm", "uninstall", helmRelease, "--namespace", operatorNamespace))
+
+	By("deleting the test namespace")
+	_, _ = utils.Run(exec.Command("kubectl", "delete", "namespace", e2eNamespace, "--wait=false"))
 })
 
-// Disable kubectl kuberc by default for test isolation.
-// This prevents local kubectl configurations from affecting test behavior.
-// To enable kuberc, set: KUBECTL_KUBERC=true
-func configureKubectlKubeRC() {
-	if os.Getenv("KUBECTL_KUBERC") != "true" {
-		By("disabling kubectl kuberc for test isolation")
-		err := os.Setenv("KUBECTL_KUBERC", "false")
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to disable kubectl kuberc")
-		_, _ = fmt.Fprintf(GinkgoWriter,
-			"kubectl kuberc disabled for consistent test behavior (override with KUBECTL_KUBERC=true)\n")
-	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "kubectl kuberc enabled (KUBECTL_KUBERC=true)\n")
+// installOperator installs the chart, pointing every site at the in-cluster
+// object store by default. Installing through the chart rather than through
+// kustomize means the release path users follow is the one under test.
+func installOperator() {
+	args := []string{
+		"upgrade", "--install", helmRelease, "dist/chart",
+		"--namespace", operatorNamespace, "--create-namespace",
+		"--wait", "--timeout", "5m",
+		"--set", "manager.image.repository=example.com/static-s3-operator",
+		"--set", "manager.image.tag=e2e",
+		"--set", "manager.image.pullPolicy=Never",
+		// The operator's defaults are what a site inherits, so setting them here also
+		// checks that the chart wires them through to the manager's flags.
+		"--set", "operator.defaults.endpoint=" + minioEndpoint,
+		"--set", "operator.defaults.forcePathStyle=true",
+		"--set", "operator.defaults.region=us-east-1",
+		// The syncer image is the operator image, and must not be pulled.
+		"--set", "operator.syncer.imagePullPolicy=Never",
+		// Short delays so a spec can watch a retry happen.
+		"--set", "operator.reconcile.syncRetryBaseDelay=5s",
+		"--set", "operator.reconcile.syncRetryMaxDelay=20s",
+		"--set", "operator.reconcile.ownershipRecheckInterval=30s",
+		"--set", "operator.credentials.create=true",
+		"--set", "operator.credentials.accessKeyID=" + minioAccessKey,
+		"--set", "operator.credentials.secretAccessKey=" + minioSecretKey,
+		// Metrics need no certificates for this run.
+		"--set", "metrics.enabled=false",
 	}
+
+	output, err := utils.Run(exec.Command("helm", args...))
+	Expect(err).NotTo(HaveOccurred(), "failed to install the chart: %s", output)
+
+	Eventually(func(g Gomega) {
+		out, err := utils.Run(exec.Command("kubectl", "get", "deployment",
+			helmRelease+"-controller-manager", "-n", operatorNamespace,
+			"-o", "jsonpath={.status.readyReplicas}"))
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(out).To(Equal("1"), "the operator should have one ready replica")
+	}, 3*time.Minute, 3*time.Second).Should(Succeed())
 }
 
-// setupCertManager installs CertManager if needed for webhook tests.
-// Skips installation if CERT_MANAGER_INSTALL_SKIP=true or if already present.
-func setupCertManager() {
-	if os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true" {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager installation (CERT_MANAGER_INSTALL_SKIP=true)\n")
-		return
-	}
-
-	By("checking if CertManager is already installed")
-	if utils.IsCertManagerCRDsInstalled() {
-		_, _ = fmt.Fprintf(GinkgoWriter, "CertManager is already installed. Skipping installation.\n")
-		return
-	}
-
-	// Mark for cleanup before installation to handle interruptions and partial installs.
-	shouldCleanupCertManager = true
-
-	By("installing CertManager")
-	Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
+func applyTestData(file string) {
+	output, err := utils.Run(exec.Command("kubectl", "apply", "-f", "test/e2e/testdata/"+file))
+	Expect(err).NotTo(HaveOccurred(), "failed to apply %s: %s", file, output)
 }
 
-// teardownCertManager uninstalls CertManager if it was installed by setupCertManager.
-// This ensures we only remove what we installed.
-func teardownCertManager() {
-	if !shouldCleanupCertManager {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager cleanup (not installed by this suite)\n")
+func waitForDeployment(name string) {
+	output, err := utils.Run(exec.Command("kubectl", "wait", "--for=condition=Available",
+		"deployment/"+name, "-n", e2eNamespace, "--timeout=5m"))
+	Expect(err).NotTo(HaveOccurred(), "%s did not become available: %s", name, output)
+}
+
+// dumpOperatorLogs writes the manager's logs to the test output, which is the
+// difference between a diagnosable CI failure and a mystery.
+func dumpOperatorLogs() {
+	output, err := utils.Run(exec.Command("kubectl", "logs",
+		"-n", operatorNamespace, "deployment/"+helmRelease+"-controller-manager",
+		"--tail=400", "--all-containers"))
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "could not read operator logs: %v\n", err)
 		return
 	}
-
-	By("uninstalling CertManager")
-	utils.UninstallCertManager()
+	_, _ = fmt.Fprintf(GinkgoWriter, "--- operator logs ---\n%s\n--- end operator logs ---\n", output)
 }

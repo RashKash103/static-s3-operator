@@ -1,0 +1,80 @@
+# A local, S3-compatible object store for the end-to-end tests.
+#
+# The suite runs against a real S3 API rather than a stub, because what the tests
+# are checking is that a browser can fetch the site afterwards. Credentials are
+# the well-known defaults on purpose: this only ever runs in a throwaway cluster.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: static-s3-e2e
+type: Opaque
+stringData:
+  accessKeyID: minioadmin
+  secretAccessKey: minioadmin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: static-s3-e2e
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: minioadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: minioadmin
+          ports:
+            - containerPort: 9000
+              name: s3
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        # Ephemeral on purpose: every run starts from an empty object store.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: static-s3-e2e
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
