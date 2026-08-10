@@ -35,7 +35,7 @@ metadata:
   namespace: web
 spec:
   source: {...}   # required: where the files come from
-  bucket: {...}   # required: where they go
+  bucket: {...}   # optional: where they go, if not the cluster defaults
   sync: {...}     # optional: how they are copied
   service: {...}  # optional: the DNS alias
   suspend: false  # optional

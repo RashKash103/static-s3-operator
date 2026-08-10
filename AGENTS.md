@@ -174,6 +174,16 @@ every `make manifests`, and `--check` makes it a drift check in `verify-generate
 **If you add anything else the plugin generates from the code, add it there too** —
 the failure mode is silent, and only shows up when somebody installs the chart.
 
+**A chart template is rendered, so `{{` in copied output is not inert.** API field
+documentation legitimately contains Go template syntax — `websiteEndpointTemplate`
+exists to accept a template, and the default bucket name is
+`static-s3-{{.OpaqueID}}` — and Helm evaluated those against the chart's values and
+rendered them empty, so `kubectl explain` read "evaluated with ,  and ," for anyone
+who installed by chart. `helmsync` escapes `{{` as `{{ "{{" }}` on the way in
+(`escapeTemplateActions`). The source CRD under `config/` is not a template and must
+not be escaped. This is invisible in the stored YAML diff: check
+`helm template` output, not the file.
+
 ### Adding a setting
 
 A new cluster-wide default touches four places, in this order:

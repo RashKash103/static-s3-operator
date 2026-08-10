@@ -105,12 +105,15 @@ pull image by digest → extract spec.source.path → hash every file
 image's build time, so a timestamp says nothing about whether the contents changed.
 The syncer hashes each local file and compares:
 
-- If the object's ETag is a plain MD5 — which it is for anything uploaded in one
-  part — that settles it with no extra request.
-- Otherwise the syncer reads the hash it stored itself in object metadata
-  (`x-amz-meta-static-s3-md5`), which makes the comparison exact for multipart
-  objects too. An object uploaded by something else has no such metadata and is
-  replaced.
+- If the object's ETag is a plain MD5 — which it is for anything uploaded in a
+  single part, and the syncer uploads in a single part — that settles it with no
+  extra request.
+- Otherwise the ETag is not a digest of the content: it has the `<hash>-<parts>`
+  shape of a multipart upload, or the provider derives it some other way, as
+  happens under server-side encryption. The syncer then reads the hash it stored
+  itself in object metadata (`x-amz-meta-static-s3-md5`), which keeps the
+  comparison exact. An object uploaded by something else has no such metadata and
+  is replaced.
 
 **Content types from extensions only.** Never by sniffing the file. A built-in
 table is consulted before Go's, because Go's is seeded from `/etc/mime.types` and

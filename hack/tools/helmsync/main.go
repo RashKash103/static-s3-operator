@@ -283,7 +283,7 @@ func wrap(raw []byte) ([]byte, error) {
 	var out strings.Builder
 	out.WriteString(enabledGuardOpen + "\n")
 	for i, line := range lines {
-		out.WriteString(line + "\n")
+		out.WriteString(escapeTemplateActions(line) + "\n")
 		if i == annotations {
 			out.WriteString(keepPolicy + "\n")
 		}
@@ -291,4 +291,18 @@ func wrap(raw []byte) ([]byte, error) {
 	out.WriteString(enabledGuardClose + "\n")
 
 	return []byte(out.String()), nil
+}
+
+// escapeTemplateActions protects Go template syntax that belongs to the CRD from
+// being evaluated by Helm.
+//
+// A chart template is rendered, and the API's field documentation legitimately
+// contains "{{.Bucket}}" and the like -- websiteEndpointTemplate exists to accept a
+// Go template, so its description has to show one. Left alone, Helm evaluates those
+// as actions against the chart's values and they render empty, so anyone who
+// installed by chart got "evaluated with ,  and ," out of `kubectl explain`.
+//
+// "{{" is the only sequence that opens an action; a bare "}}" is literal text.
+func escapeTemplateActions(line string) string {
+	return strings.ReplaceAll(line, "{{", `{{ "{{" }}`)
 }

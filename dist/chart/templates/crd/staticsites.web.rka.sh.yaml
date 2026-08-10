@@ -167,11 +167,13 @@ spec:
                     description: |-
                       name is the S3 bucket name.
 
-                      Leave it out and the operator generates one from this resource's namespace
-                      and name, through the operator's --default-bucket-name-template
-                      ("{{.Namespace}}-{{.Name}}" out of the box). Bucket names are global per
-                      provider, so a cluster sharing a provider with others should give that
-                      template a prefix of its own.
+                      Leave it out and the operator generates one, through its
+                      --default-bucket-name-template ("static-s3-{{ "{{" }}.OpaqueID}}" out of the box).
+                      OpaqueID is a UUIDv5 of "<namespace>/<name>" in a UUID namespace unique to
+                      this cluster, so the generated name is stable and reproducible but does not
+                      disclose the namespace or resource name -- which matters because a bucket
+                      name reached by CNAME is public. Bucket names are global per provider; the
+                      cluster-specific UUID namespace keeps two clusters from colliding.
 
                       Whether given or generated, the name is fixed for the life of the resource:
                       it is recorded in status.bucketName and reused from there, so changing the
@@ -246,8 +248,8 @@ spec:
                     description: |-
                       websiteEndpointTemplate builds status.websiteURL for providers whose
                       website hostname differs from their API endpoint. It is a Go template
-                      evaluated with {{.Bucket}}, {{.Region}} and {{.Endpoint}}, for example
-                      "http://{{.Bucket}}.website-{{.Region}}.example-object-store.com". Falls
+                      evaluated with {{ "{{" }}.Bucket}}, {{ "{{" }}.Region}} and {{ "{{" }}.Endpoint}}, for example
+                      "http://{{ "{{" }}.Bucket}}.website-{{ "{{" }}.Region}}.example-object-store.com". Falls
                       back to the operator's --default-website-endpoint-template, and then to the
                       AWS or path-style form derived from the endpoint.
                     maxLength: 2048

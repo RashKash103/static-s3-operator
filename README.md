@@ -238,8 +238,8 @@ spec:
   source:
     image: ghcr.io/acme/docs:latest
   bucket:
-    # Optional: leave it out for "<namespace>-<name>", so "web-docs" here.
-    name: acme-docs
+    # No "name": the operator generates an opaque one it records in
+    # status.bucketName. Set it only when a site needs a particular bucket.
     website:
       indexDocument: index.html
       errorDocument: 404.html
@@ -260,11 +260,11 @@ Watch it:
 
 ```console
 $ kubectl get staticsites -n web
-NAME   PHASE   BUCKET       READY   LAST SYNC   AGE
-docs   Ready   acme-docs    True    12s         30s
+NAME   PHASE   BUCKET                                            READY   LAST SYNC   AGE
+docs   Ready   static-s3-f1acd0bd-d4a1-5773-b2b7-19b67ff61a44    True    12s         30s
 
 $ kubectl get staticsite docs -n web -o jsonpath='{.status.websiteURL}'
-http://acme-docs.s3-website-us-east-1.amazonaws.com
+http://static-s3-f1acd0bd-d4a1-5773-b2b7-19b67ff61a44.s3-website-us-east-1.amazonaws.com
 ```
 
 If it is not `Ready`, the conditions say which stage it is stuck at:
@@ -364,9 +364,12 @@ spec:
 
 ```console
 $ kubectl get service docs -n web
-NAME   TYPE           CLUSTER-IP   EXTERNAL-IP                                          PORT(S)   AGE
-docs   ExternalName   <none>       acme-docs.s3-website-us-east-1.amazonaws.com         <none>    1m
+NAME   TYPE           CLUSTER-IP   EXTERNAL-IP                                                                PORT(S)   AGE
+docs   ExternalName   <none>       static-s3-f1acd0bd-...-19b67ff61a44.s3-website-us-east-1.amazonaws.com     <none>    1m
 ```
+
+The record a visitor can look up is that opaque hostname, which is the reason the
+generated name carries no namespace or resource name.
 
 A CNAME can only point at a hostname, never at a path. Providers whose website URL
 is path-style (`endpoint/bucket/`) cannot be expressed as a CNAME alone: the record

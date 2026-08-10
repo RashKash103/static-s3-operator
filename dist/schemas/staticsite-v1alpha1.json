@@ -86,7 +86,7 @@
               "type": "boolean"
             },
             "name": {
-              "description": "name is the S3 bucket name.\n\nLeave it out and the operator generates one from this resource's namespace\nand name, through the operator's --default-bucket-name-template\n(\"{{.Namespace}}-{{.Name}}\" out of the box). Bucket names are global per\nprovider, so a cluster sharing a provider with others should give that\ntemplate a prefix of its own.\n\nWhether given or generated, the name is fixed for the life of the resource:\nit is recorded in status.bucketName and reused from there, so changing the\ncluster's template later does not move an existing site to a new bucket. To\npublish to a different bucket, create a new StaticSite.",
+              "description": "name is the S3 bucket name.\n\nLeave it out and the operator generates one, through its\n--default-bucket-name-template (\"static-s3-{{.OpaqueID}}\" out of the box).\nOpaqueID is a UUIDv5 of \"\u003cnamespace\u003e/\u003cname\u003e\" in a UUID namespace unique to\nthis cluster, so the generated name is stable and reproducible but does not\ndisclose the namespace or resource name -- which matters because a bucket\nname reached by CNAME is public. Bucket names are global per provider; the\ncluster-specific UUID namespace keeps two clusters from colliding.\n\nWhether given or generated, the name is fixed for the life of the resource:\nit is recorded in status.bucketName and reused from there, so changing the\ncluster's template later does not move an existing site to a new bucket. To\npublish to a different bucket, create a new StaticSite.",
               "maxLength": 63,
               "minLength": 3,
               "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
