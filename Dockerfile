@@ -3,7 +3,14 @@
 # Both ship in the same image on purpose: the operator reads its own image from
 # its Pod and runs sync Jobs with it, so a manager and its syncer can never drift
 # apart across an upgrade.
-FROM golang:1.26 AS builder
+# --platform=$BUILDPLATFORM keeps the builder stage on the machine's own
+# architecture. Without it, buildx runs this stage under emulation for every target
+# platform, which means emulating the Go compiler -- an arm64 image took over
+# twenty-five minutes to build that way. Go cross-compiles natively, and the
+# TARGETOS/TARGETARCH arguments below are exactly what it needs to, so the
+# emulation buys nothing.
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+ARG BUILDPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
 
