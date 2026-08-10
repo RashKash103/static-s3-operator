@@ -117,11 +117,19 @@ jobs:
             | tee /tmp/manager.log
           grep -q "Resolved operator configuration" /tmp/manager.log
 
-      - name: Confirm the CRD is installed and usable
+      - name: Confirm the CRD the chart ships accepts every example
+        # The chart carries its own copy of the CRD. When it lags the API, the
+        # operator is correct and installing the chart still rejects valid
+        # manifests, so the examples are checked against the chart's copy and not
+        # only against config/crd/bases.
         run: |
           kubectl get crd staticsites.web.rka.sh
-          # The example names its own namespace, so it has to exist for a
-          # server-side dry run to get as far as validating the resource.
+          # The examples name their own namespaces, so those have to exist for a
+          # server-side dry run to get as far as validating the resources.
           kubectl create namespace web
-          kubectl apply -f examples/minimal.yaml --dry-run=server
+          for example in examples/*.yaml; do
+            echo "::group::$example"
+            kubectl apply -f "$example" --dry-run=server
+            echo "::endgroup::"
+          done
           kubectl explain staticsite.spec.source --recursive | head -20

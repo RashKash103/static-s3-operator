@@ -75,7 +75,10 @@ spec:
             description: spec defines the desired state of StaticSite
             properties:
               bucket:
-                description: bucket describes the S3 bucket that serves the site.
+                default: {}
+                description: |-
+                  bucket describes the S3 bucket that serves the site. Every field in it has a
+                  default, including the bucket name, so it can be left out entirely.
                 properties:
                   create:
                     default: true
@@ -162,9 +165,18 @@ spec:
                     type: boolean
                   name:
                     description: |-
-                      name is the S3 bucket name. It is immutable: to move a site to a different
-                      bucket, create a new StaticSite. Bucket names are global per provider, so
-                      pick something unlikely to collide.
+                      name is the S3 bucket name.
+
+                      Leave it out and the operator generates one from this resource's namespace
+                      and name, through the operator's --default-bucket-name-template
+                      ("{{.Namespace}}-{{.Name}}" out of the box). Bucket names are global per
+                      provider, so a cluster sharing a provider with others should give that
+                      template a prefix of its own.
+
+                      Whether given or generated, the name is fixed for the life of the resource:
+                      it is recorded in status.bucketName and reused from there, so changing the
+                      cluster's template later does not move an existing site to a new bucket. To
+                      publish to a different bucket, create a new StaticSite.
                     maxLength: 63
                     minLength: 3
                     pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
@@ -234,14 +246,12 @@ spec:
                     description: |-
                       websiteEndpointTemplate builds status.websiteURL for providers whose
                       website hostname differs from their API endpoint. It is a Go template
-                      evaluated with {{ "{{.Bucket}}" }}, {{ "{{.Region}}" }} and {{ "{{.Endpoint}}" }}, for example
-                      "http://{{ "{{.Bucket}}" }}.website-{{ "{{.Region}}" }}.example-object-store.com". Falls
+                      evaluated with {{.Bucket}}, {{.Region}} and {{.Endpoint}}, for example
+                      "http://{{.Bucket}}.website-{{.Region}}.example-object-store.com". Falls
                       back to the operator's --default-website-endpoint-template, and then to the
                       AWS or path-style form derived from the endpoint.
                     maxLength: 2048
                     type: string
-                required:
-                - name
                 type: object
               service:
                 default: {}
@@ -3529,7 +3539,6 @@ spec:
                     type: integer
                 type: object
             required:
-            - bucket
             - source
             type: object
           status:
@@ -3698,6 +3707,15 @@ spec:
                 description: |-
                   nextResolveTime is when the operator will next poll the registry for a new
                   digest. Empty for digest-pinned sources and when polling is disabled.
+                format: date-time
+                type: string
+              nextSyncTime:
+                description: |-
+                  nextSyncTime is the earliest the operator will start another sync after a
+                  failure. It backs off exponentially with failedSyncs, and exists so that a
+                  site whose syncs keep failing does not start a new Job every time the last
+                  one's status changes. It is cleared on success, and ignored when a sync is
+                  requested by annotation.
                 format: date-time
                 type: string
               observedGeneration:

@@ -46,6 +46,15 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	@# The Helm chart carries its own copy of the CRDs, and the plugin only rewrites
+	@# them when the whole chart is regenerated -- which would overwrite this
+	@# project's customisations. Syncing them here keeps the chart from shipping a
+	@# CRD the operator no longer matches.
+	$(MAKE) --no-print-directory helm-crds
+
+.PHONY: helm-crds
+helm-crds: ## Sync the generated CRDs into the Helm chart's templates.
+	go run ./hack/tools/helmcrds --crd-dir config/crd/bases --chart-crd-dir dist/chart/templates/crd
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -116,6 +125,7 @@ SCHEMA_ID_PREFIX ?= https://raw.githubusercontent.com/rashkash103/static-s3-oper
 
 .PHONY: verify-generated
 verify-generated: manifests generate schemas build-installer ## Fail if generated files are out of date.
+	go run ./hack/tools/helmcrds --check
 	@if [ -n "$$(git status --porcelain -- config dist api)" ]; then \
 		echo "Generated files are out of date. Run 'make manifests generate schemas build-installer' and commit the result:"; \
 		git --no-pager diff -- config dist api; \
