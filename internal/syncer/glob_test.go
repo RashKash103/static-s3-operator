@@ -68,6 +68,38 @@ func TestGlobMatch(t *testing.T) {
 			matches: []string{"robots.txt"},
 			misses:  []string{"a/robots.txt", "robots.txt.bak"},
 		},
+		{
+			// Without this, a rule written the obvious way silently matches nothing:
+			// the pattern would only match a file literally called "{woff,woff2}".
+			name:    "brace alternatives",
+			pattern: "**/*.{woff,woff2}",
+			matches: []string{"font.woff", "font.woff2", "assets/font.woff", "a/b/font.woff2"},
+			misses:  []string{"font.ttf", "font.{woff,woff2}", "woff"},
+		},
+		{
+			name:    "alternatives may themselves be patterns",
+			pattern: "{assets,static}/**",
+			matches: []string{"assets/app.css", "static/img/logo.svg"},
+			misses:  []string{"public/app.css", "assets", "other/assets/app.css"},
+		},
+		{
+			name:    "nested alternatives",
+			pattern: "*.{png,jp{g,eg}}",
+			matches: []string{"a.png", "a.jpg", "a.jpeg"},
+			misses:  []string{"a.gif", "a.jp"},
+		},
+		{
+			name:    "an empty alternative matches nothing extra",
+			pattern: "index{,.html}",
+			matches: []string{"index", "index.html"},
+			misses:  []string{"index.htm"},
+		},
+		{
+			name:    "an unmatched brace is literal",
+			pattern: "weird{name.txt",
+			matches: []string{"weird{name.txt"},
+			misses:  []string{"weirdname.txt"},
+		},
 	}
 
 	for _, test := range tests {
@@ -138,6 +170,41 @@ func TestGlobSetOnEmptyListMatchesNothing(t *testing.T) {
 	}
 	if set.Matches("index.html") {
 		t.Error("an empty exclude list should match nothing")
+	}
+}
+
+func TestGlobBraceAlternativesInACacheControlRule(t *testing.T) {
+	// The shape a real cache policy is written in, and the one that used to match
+	// nothing at all.
+	rules, err := CompileGlobValues([]Rule{
+		{Pattern: "**/*.{woff,woff2,ttf,otf}", Value: "public, max-age=31536000, immutable"},
+		{Pattern: "**/*.{html,htm}", Value: "public, max-age=0, must-revalidate"},
+	})
+	if err != nil {
+		t.Fatalf("CompileGlobValues returned an error: %v", err)
+	}
+
+	immutable := map[string]bool{
+		"assets/inter.woff2": true,
+		"fonts/mono.woff":    true,
+		"fonts/serif.ttf":    true,
+		"index.html":         false,
+		"docs/page.htm":      false,
+	}
+	for path, wantImmutable := range immutable {
+		value, ok := rules.Lookup(path)
+		if !ok {
+			t.Errorf("no rule matched %q", path)
+			continue
+		}
+		isImmutable := value == "public, max-age=31536000, immutable"
+		if isImmutable != wantImmutable {
+			t.Errorf("Lookup(%q) = %q", path, value)
+		}
+	}
+
+	if value, ok := rules.Lookup("robots.txt"); ok {
+		t.Errorf("robots.txt should match no rule, got %q", value)
 	}
 }
 

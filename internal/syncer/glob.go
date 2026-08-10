@@ -24,10 +24,11 @@ import (
 // anywhere"), so patterns are compiled to anchored regular expressions with
 // these rules:
 //
-//	?    one character, not a slash
-//	*    any run of characters, not crossing a slash
-//	**   any run of characters, crossing slashes
-//	**/  zero or more leading directories, so **/*.css matches a.css and x/a.css
+//	?        one character, not a slash
+//	*        any run of characters, not crossing a slash
+//	**       any run of characters, crossing slashes
+//	**/      zero or more leading directories, so **/*.css matches a.css and x/a.css
+//	{a,b,c}  any one of the alternatives, which may themselves contain patterns
 //
 // Everything else is literal. Matching is case sensitive, because object keys
 // are.
@@ -42,8 +43,23 @@ func CompileGlob(pattern string) (*Glob, error) {
 		return nil, fmt.Errorf("glob pattern is empty")
 	}
 
+	expression, err := globExpression(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	re, err := regexp.Compile(`\A` + expression + `\z`)
+	if err != nil {
+		return nil, fmt.Errorf("compile glob %q: %w", pattern, err)
+	}
+	return &Glob{pattern: pattern, re: re}, nil
+}
+
+// globExpression translates a pattern into an unanchored regular expression. It
+// recurses for brace alternatives, so each alternative is a pattern in its own
+// right and "{assets,static}/**" works as written.
+func globExpression(pattern string) (string, error) {
 	var expr strings.Builder
-	expr.WriteString(`\A`)
 
 	for i := 0; i < len(pattern); {
 		switch {
@@ -60,19 +76,76 @@ func CompileGlob(pattern string) (*Glob, error) {
 		case pattern[i] == '?':
 			expr.WriteString(`[^/]`)
 			i++
+		case pattern[i] == '{':
+			end, ok := matchingBrace(pattern, i)
+			if !ok {
+				// An unmatched brace is far more likely to be a literal character in a
+				// filename than a mistake worth rejecting the whole pattern for.
+				expr.WriteString(regexp.QuoteMeta("{"))
+				i++
+				continue
+			}
+
+			alternatives := splitAlternatives(pattern[i+1 : end])
+			fragments := make([]string, 0, len(alternatives))
+			for _, alternative := range alternatives {
+				fragment, err := globExpression(alternative)
+				if err != nil {
+					return "", err
+				}
+				fragments = append(fragments, fragment)
+			}
+
+			expr.WriteString("(?:" + strings.Join(fragments, "|") + ")")
+			i = end + 1
 		default:
 			expr.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
 			i++
 		}
 	}
 
-	expr.WriteString(`\z`)
+	return expr.String(), nil
+}
 
-	re, err := regexp.Compile(expr.String())
-	if err != nil {
-		return nil, fmt.Errorf("compile glob %q: %w", pattern, err)
+// matchingBrace finds the "}" closing the "{" at open, allowing for nesting.
+func matchingBrace(pattern string, open int) (int, bool) {
+	depth := 0
+	for i := open; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
 	}
-	return &Glob{pattern: pattern, re: re}, nil
+	return 0, false
+}
+
+// splitAlternatives splits a brace body on its top-level commas, leaving commas
+// inside a nested brace alone.
+func splitAlternatives(body string) []string {
+	var alternatives []string
+	depth := 0
+	start := 0
+
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		case ',':
+			if depth == 0 {
+				alternatives = append(alternatives, body[start:i])
+				start = i + 1
+			}
+		}
+	}
+
+	return append(alternatives, body[start:])
 }
 
 // Match reports whether path matches the pattern. path is always a

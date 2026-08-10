@@ -225,10 +225,22 @@ publishing to the wrong place.
 | `retainHistory` | 0–20 | `3` | Attempts kept in `status.syncHistory`, and finished Jobs kept. |
 | `job` | object | see below | The Job that runs the publish. |
 
-Glob syntax: `*` matches within a path segment, `**` crosses segments, `**/` also
-matches at the root (so `**/*.css` matches `app.css` and `a/b/app.css`), and `?`
-matches one non-slash character. Patterns are matched against the path relative to
-the site root, not the object key, so a `keyPrefix` does not change them.
+Glob syntax:
+
+| Pattern | Matches |
+| --- | --- |
+| `?` | one character, not a slash |
+| `*` | any run of characters within one path segment |
+| `**` | any run of characters, crossing slashes |
+| `**/` | zero or more leading directories, so `**/*.css` matches `app.css` and `a/b/app.css` |
+| `{a,b,c}` | any one of the alternatives, each of which may itself be a pattern |
+
+So `**/*.{woff,woff2}` covers both font extensions at any depth, and
+`{assets,static}/**` covers two directories. Alternatives nest. Everything else is
+literal, and matching is case sensitive because object keys are.
+
+Patterns match the path relative to the site root, not the object key, so a
+`keyPrefix` does not change them.
 
 #### spec.sync.job
 
