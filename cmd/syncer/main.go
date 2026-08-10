@@ -37,7 +37,6 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -120,8 +119,11 @@ func main() {
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	// The logger is set through pkg/log rather than the controller-runtime alias
+	// package on purpose: that package registers a --kubeconfig flag, which would
+	// advertise a Kubernetes connection this binary does not have and must not need.
 	log := zap.New(zap.UseFlagOptions(&zapOptions))
-	ctrl.SetLogger(log)
+	logf.SetLogger(log)
 
 	// Kubernetes sends SIGTERM when a Job exceeds its deadline or is deleted;
 	// cancelling the context lets an in-flight upload stop promptly and still
