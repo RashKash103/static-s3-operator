@@ -523,6 +523,56 @@ type SyncSpec struct {
 	Job SyncJobSpec `json:"job,omitzero"`
 }
 
+// ServiceSpec configures the ExternalName Service the operator maintains for the
+// site.
+//
+// The Service is a CNAME-shaped handle on the bucket's website hostname. Its
+// main use is external-dns: annotate it with the hostnames you want and
+// external-dns publishes CNAME records pointing at the bucket, so a site gets
+// its own DNS name without anybody editing a zone by hand.
+type ServiceSpec struct {
+	// enabled creates and maintains the Service. Turn it off for sites reached
+	// only through a CDN you configure elsewhere.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// name overrides the Service name, which defaults to the StaticSite's own
+	// name.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name,omitempty"`
+
+	// externalName overrides the hostname the Service points at. By default the
+	// operator uses the host of status.websiteURL.
+	//
+	// A Service can only point at a hostname, never at a path. Providers whose
+	// website URL is path style, "endpoint/bucket/", therefore cannot be
+	// expressed as a CNAME alone: the record will resolve to the endpoint and a
+	// proxy in front of it has to add the bucket prefix.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	ExternalName string `json:"externalName,omitempty"`
+
+	// hostnames are the DNS names this site should answer on. They are rendered
+	// into the external-dns hostname annotation, whose key the operator's
+	// --external-dns-hostname-annotation flag controls, so the common case needs
+	// no annotation boilerplate. Anything set in annotations wins over this.
+	// +optional
+	Hostnames []string `json:"hostnames,omitempty"`
+
+	// annotations are merged onto the Service, and override any annotation the
+	// operator would generate. Use this for the rest of an external-dns
+	// configuration, such as a record TTL or a provider-specific hint.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// labels are merged onto the Service.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
 // StaticSiteSpec defines the desired state of StaticSite.
 type StaticSiteSpec struct {
 	// source describes the container image holding the built site.
@@ -537,6 +587,12 @@ type StaticSiteSpec struct {
 	// +optional
 	// +kubebuilder:default={}
 	Sync SyncSpec `json:"sync,omitzero"`
+
+	// service configures the ExternalName Service pointing at the bucket's
+	// website hostname, which is how external-dns publishes DNS for the site.
+	// +optional
+	// +kubebuilder:default={}
+	Service ServiceSpec `json:"service,omitzero"`
 
 	// suspend stops reconciliation of this StaticSite. In-flight sync Jobs are
 	// left to finish. Use it to freeze a site during an incident without deleting
@@ -668,6 +724,11 @@ type StaticSiteStatus struct {
 	// predictable one.
 	// +optional
 	WebsiteURL string `json:"websiteURL,omitempty"`
+
+	// serviceName is the ExternalName Service pointing at the site, if one is
+	// enabled.
+	// +optional
+	ServiceName string `json:"serviceName,omitempty"`
 
 	// resolvedImage is spec.source.image rewritten to a digest reference, which
 	// is exactly what the sync Job pulls.

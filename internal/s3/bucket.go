@@ -299,6 +299,17 @@ func (m *BucketManager) putTags(ctx context.Context, bucket string, tags map[str
 	return err
 }
 
+// DeleteKeys removes specific object keys, batching them into as few requests as
+// the API allows. It is what a mirroring sync uses to drop objects that are no
+// longer part of the site.
+func (m *BucketManager) DeleteKeys(ctx context.Context, bucket string, keys []string) (int, error) {
+	objects := make([]types.ObjectIdentifier, 0, len(keys))
+	for _, key := range keys {
+		objects = append(objects, types.ObjectIdentifier{Key: aws.String(key)})
+	}
+	return m.deleteObjects(ctx, bucket, objects)
+}
+
 // Empty removes every object under prefix, including non-current versions and
 // delete markers on a versioned bucket. It returns the number of objects
 // removed. An empty prefix empties the whole bucket.

@@ -70,6 +70,13 @@ type Effective struct {
 	SyncerImagePullPolicy corev1.PullPolicy
 	MaxExtractBytes       int64
 	MaxExtractFiles       int
+
+	// Service
+	ServiceEnabled      bool
+	ServiceName         string
+	ServiceExternalName string
+	ServiceAnnotations  map[string]string
+	ServiceLabels       map[string]string
 }
 
 // Effective resolves site against the operator defaults. It returns an error
@@ -147,7 +154,39 @@ func (d *Defaults) Effective(site *webv1alpha1.StaticSite) (*Effective, error) {
 	}
 	e.WebsiteURL = websiteURL
 
+	d.applyServiceDefaults(site, e)
+
 	return e, nil
+}
+
+// applyServiceDefaults resolves the ExternalName Service settings.
+func (d *Defaults) applyServiceDefaults(site *webv1alpha1.StaticSite, e *Effective) {
+	service := site.Spec.Service
+
+	e.ServiceEnabled = boolValue(service.Enabled, true)
+	e.ServiceName = firstNonEmpty(service.Name, site.Name)
+	e.ServiceLabels = service.Labels
+
+	e.ServiceExternalName = service.ExternalName
+	if e.ServiceExternalName == "" {
+		// A Service can only ever point at a hostname, so the path part of a
+		// path-style website URL is necessarily dropped here. That limitation is
+		// documented on spec.service.externalName.
+		if parsed, err := url.Parse(e.WebsiteURL); err == nil {
+			e.ServiceExternalName = parsed.Hostname()
+		}
+	}
+
+	annotations := map[string]string{}
+	if d.ExternalDNSHostnameAnnotation != "" && len(service.Hostnames) > 0 {
+		annotations[d.ExternalDNSHostnameAnnotation] = strings.Join(service.Hostnames, ",")
+	}
+	for key, value := range service.Annotations {
+		annotations[key] = value
+	}
+	if len(annotations) > 0 {
+		e.ServiceAnnotations = annotations
+	}
 }
 
 // SyncSpecHash fingerprints the settings that change what a sync would write.

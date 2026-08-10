@@ -240,6 +240,59 @@ spec:
                 required:
                 - name
                 type: object
+              service:
+                default: {}
+                description: |-
+                  service configures the ExternalName Service pointing at the bucket's
+                  website hostname, which is how external-dns publishes DNS for the site.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are merged onto the Service, and override any annotation the
+                      operator would generate. Use this for the rest of an external-dns
+                      configuration, such as a record TTL or a provider-specific hint.
+                    type: object
+                  enabled:
+                    default: true
+                    description: |-
+                      enabled creates and maintains the Service. Turn it off for sites reached
+                      only through a CDN you configure elsewhere.
+                    type: boolean
+                  externalName:
+                    description: |-
+                      externalName overrides the hostname the Service points at. By default the
+                      operator uses the host of status.websiteURL.
+
+                      A Service can only point at a hostname, never at a path. Providers whose
+                      website URL is path style, "endpoint/bucket/", therefore cannot be
+                      expressed as a CNAME alone: the record will resolve to the endpoint and a
+                      proxy in front of it has to add the bucket prefix.
+                    maxLength: 253
+                    type: string
+                  hostnames:
+                    description: |-
+                      hostnames are the DNS names this site should answer on. They are rendered
+                      into the external-dns hostname annotation, whose key the operator's
+                      --external-dns-hostname-annotation flag controls, so the common case needs
+                      no annotation boilerplate. Anything set in annotations wins over this.
+                    items:
+                      type: string
+                    type: array
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: labels are merged onto the Service.
+                    type: object
+                  name:
+                    description: |-
+                      name overrides the Service name, which defaults to the StaticSite's own
+                      name.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                type: object
               source:
                 description: source describes the container image holding the built
                   site.
@@ -3660,6 +3713,11 @@ spec:
                 description: |-
                   resolvedImage is spec.source.image rewritten to a digest reference, which
                   is exactly what the sync Job pulls.
+                type: string
+              serviceName:
+                description: |-
+                  serviceName is the ExternalName Service pointing at the site, if one is
+                  enabled.
                 type: string
               syncHistory:
                 description: |-

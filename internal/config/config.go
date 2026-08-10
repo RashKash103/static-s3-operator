@@ -51,6 +51,11 @@ type Defaults struct {
 	// spec.sync.cacheControl rule. Empty sends no header.
 	CacheControl string
 
+	// ExternalDNSHostnameAnnotation is the annotation key that spec.service
+	// hostnames are rendered into. It matches external-dns by default, and can be
+	// pointed at another controller's key or emptied to render nothing.
+	ExternalDNSHostnameAnnotation string
+
 	// SyncerImage is the image used for sync Jobs. It defaults to the operator's
 	// own image, which ships the syncer binary, and is normally set by the Helm
 	// chart to the exact digest of the running operator.
@@ -112,6 +117,9 @@ func New() *Defaults {
 		Region:                   "us-east-1",
 		IndexDocument:            "index.html",
 		ErrorDocument:            "404.html",
+
+		ExternalDNSHostnameAnnotation: "external-dns.alpha.kubernetes.io/hostname",
+
 		SyncerImagePullPolicy:    "IfNotPresent",
 		CredentialsSecret:        "static-s3-operator-s3-credentials",
 		AccessKeyIDKey:           "accessKeyID",
@@ -152,6 +160,11 @@ func (d *Defaults) BindFlags(fs *flag.FlagSet) {
 			"Empty configures no error document.")
 	fs.StringVar(&d.CacheControl, "default-cache-control", d.CacheControl,
 		"Cache-Control header for objects matched by no spec.sync.cacheControl rule. Empty sends no header.")
+
+	fs.StringVar(&d.ExternalDNSHostnameAnnotation, "external-dns-hostname-annotation",
+		d.ExternalDNSHostnameAnnotation,
+		"Annotation key that spec.service.hostnames are rendered into on the generated "+
+			"ExternalName Service. Empty renders no hostname annotation.")
 
 	fs.StringVar(&d.SyncerImage, "syncer-image", d.SyncerImage,
 		"Image for sync Jobs. Defaults to the operator's own image, which ships the syncer binary.")

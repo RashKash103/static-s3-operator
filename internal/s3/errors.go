@@ -128,6 +128,24 @@ func IsMissingConfiguration(err error) bool {
 	)
 }
 
+// IsACLNotSupported reports that the bucket refuses per-object ACLs.
+//
+// AWS disables ACLs on buckets created since April 2023, and several
+// S3-compatible providers never implemented them, so an upload asking for
+// public-read is rejected outright. The site is still readable through the
+// bucket policy, so the sync drops the ACL and carries on.
+func IsACLNotSupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	return hasCode(err,
+		"AccessControlListNotSupported",
+		"InvalidBucketAclWithObjectOwnership",
+		"NotImplemented",
+		"UnsupportedArgument",
+	)
+}
+
 // IsInvalidCredentials reports that the provider rejected the access key
 // outright, so retrying will not help until the Secret is fixed.
 func IsInvalidCredentials(err error) bool {
