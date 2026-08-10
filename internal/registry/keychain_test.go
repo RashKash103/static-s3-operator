@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -23,17 +24,21 @@ import (
 )
 
 func dockerConfigJSON(entries map[string]string) []byte {
-	document := `{"auths":{`
+	var document strings.Builder
+	document.WriteString(`{"auths":{`)
+
 	first := true
 	for registryKey, credential := range entries {
 		if !first {
-			document += ","
+			document.WriteString(",")
 		}
 		first = false
-		document += fmt.Sprintf(`%q:{"auth":%q}`, registryKey,
+		fmt.Fprintf(&document, `%q:{"auth":%q}`, registryKey,
 			base64.StdEncoding.EncodeToString([]byte(credential)))
 	}
-	return []byte(document + `}}`)
+
+	document.WriteString(`}}`)
+	return []byte(document.String())
 }
 
 func resolve(t *testing.T, keychain authn.Keychain, reference string) authn.AuthConfig {
@@ -143,9 +148,8 @@ func TestKeychainAcceptsExplicitUsernameAndPassword(t *testing.T) {
 
 func TestKeychainAcceptsTheDockercfgFormat(t *testing.T) {
 	// A kubernetes.io/dockercfg Secret is the bare registry map, with no "auths".
-	keychain, err := KeychainFromDockerConfigs([]byte(
-		fmt.Sprintf(`{"ghcr.io":{"auth":%q}}`,
-			base64.StdEncoding.EncodeToString([]byte("legacy:legacy-pass")))))
+	keychain, err := KeychainFromDockerConfigs(fmt.Appendf(nil, `{"ghcr.io":{"auth":%q}}`,
+		base64.StdEncoding.EncodeToString([]byte("legacy:legacy-pass"))))
 	if err != nil {
 		t.Fatalf("KeychainFromDockerConfigs returned an error: %v", err)
 	}
@@ -210,8 +214,8 @@ func TestKeychainFromSecretsReadsBothSecretTypes(t *testing.T) {
 		{
 			Type: corev1.SecretTypeDockercfg,
 			Data: map[string][]byte{
-				corev1.DockerConfigKey: []byte(fmt.Sprintf(`{"quay.io":{"auth":%q}}`,
-					base64.StdEncoding.EncodeToString([]byte("b:b-pass")))),
+				corev1.DockerConfigKey: fmt.Appendf(nil, `{"quay.io":{"auth":%q}}`,
+					base64.StdEncoding.EncodeToString([]byte("b:b-pass"))),
 			},
 		},
 		// Not a pull Secret at all: passing a namespace's Secrets unfiltered has to

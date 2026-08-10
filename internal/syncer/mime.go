@@ -17,6 +17,13 @@ import (
 	"strings"
 )
 
+// Content types used by more than one extension.
+const (
+	htmlType       = "text/html; charset=utf-8"
+	javascriptType = "text/javascript; charset=utf-8"
+	jsonType       = "application/json; charset=utf-8"
+)
+
 // Content types are decided from the file extension alone, never by sniffing
 // the file's contents. That is deliberate: sniffing is what makes a static site
 // upload non-reproducible, since the answer depends on which magic database
@@ -29,8 +36,8 @@ import (
 // unusable in a browser.
 var webContentTypes = map[string]string{
 	// Documents
-	".html":  "text/html; charset=utf-8",
-	".htm":   "text/html; charset=utf-8",
+	".html":  htmlType,
+	".htm":   htmlType,
 	".xhtml": "application/xhtml+xml; charset=utf-8",
 	".css":   "text/css; charset=utf-8",
 	".txt":   "text/plain; charset=utf-8",
@@ -40,12 +47,12 @@ var webContentTypes = map[string]string{
 	".pdf":   "application/pdf",
 
 	// Scripts and data
-	".js":          "text/javascript; charset=utf-8",
-	".mjs":         "text/javascript; charset=utf-8",
-	".cjs":         "text/javascript; charset=utf-8",
-	".json":        "application/json; charset=utf-8",
+	".js":          javascriptType,
+	".mjs":         javascriptType,
+	".cjs":         javascriptType,
+	".json":        jsonType,
 	".jsonld":      "application/ld+json; charset=utf-8",
-	".map":         "application/json; charset=utf-8",
+	".map":         jsonType,
 	".wasm":        "application/wasm",
 	".webmanifest": "application/manifest+json; charset=utf-8",
 	".rss":         "application/rss+xml; charset=utf-8",

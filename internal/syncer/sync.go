@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/go-logr/logr"
@@ -31,12 +30,20 @@ import (
 	"github.com/rashkash103/static-s3-operator/internal/s3"
 )
 
-// multipartPartSize is the part size the upload manager uses.
-//
-// It is deliberately larger than the SDK default so that ordinary site assets
-// upload in one part and keep an ETag equal to their MD5, which lets the next
-// sync compare them without an extra HeadObject per file.
-const multipartPartSize = 16 << 20
+const (
+	// defaultContentType is what an object gets when its extension is unknown and
+	// no rule matches.
+	defaultContentType = "application/octet-stream"
+
+	// maxObjectSize is the largest object a single PutObject can carry.
+	//
+	// Every upload is a single part, which also means an object's ETag is always
+	// the MD5 of its contents -- that is what lets the next sync decide whether a
+	// file changed straight from a bucket listing, with no extra request per
+	// object. A static site file above 5 GiB is not a realistic case, and the
+	// extract limits stop one arriving by accident.
+	maxObjectSize = 5 << 30
+)
 
 // Options describe one sync of a staged directory into a bucket.
 type Options struct {
@@ -140,7 +147,6 @@ func Sync(ctx context.Context, opts Options) (*Result, error) {
 		client:  opts.Client,
 		bucket:  opts.Bucket,
 		acl:     opts.ACL,
-		manager: manager.NewUploader(opts.Client, func(u *manager.Uploader) { u.PartSize = multipartPartSize }),
 		cache:   cacheRules,
 		types:   typeRules,
 		options: opts,
@@ -190,7 +196,6 @@ type objectUploader struct {
 	client  *awss3.Client
 	bucket  string
 	acl     string
-	manager *manager.Uploader
 	cache   GlobValues
 	types   GlobValues
 	options Options
@@ -244,6 +249,11 @@ func (u *objectUploader) upload(ctx context.Context, file LocalFile) error {
 }
 
 func (u *objectUploader) putObject(ctx context.Context, file LocalFile, withACL bool) error {
+	if file.Size > maxObjectSize {
+		return fmt.Errorf("%q is %d bytes, above the %d byte limit for a single object",
+			file.RelPath, file.Size, int64(maxObjectSize))
+	}
+
 	handle, err := os.Open(file.Path)
 	if err != nil {
 		return err
@@ -265,7 +275,7 @@ func (u *objectUploader) putObject(ctx context.Context, file LocalFile, withACL 
 		input.ACL = types.ObjectCannedACL(u.acl)
 	}
 
-	_, err = u.manager.Upload(ctx, input)
+	_, err = u.client.PutObject(ctx, input)
 	return err
 }
 
@@ -279,7 +289,7 @@ func (u *objectUploader) contentType(relPath string) string {
 	if u.options.DefaultContentType != "" {
 		return u.options.DefaultContentType
 	}
-	return "application/octet-stream"
+	return defaultContentType
 }
 
 func (u *objectUploader) cacheControl(relPath string) string {

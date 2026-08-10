@@ -554,6 +554,24 @@ var _ = Describe("StaticSite Controller", func() {
 				"a configuration error should not reach the provider at all")
 		})
 
+		It("reports a registry that is unreachable, and recovers when it returns", func() {
+			// Distinct from an image that does not exist: an outage is transient, so the
+			// operator has to retry rather than wait for the spec to change.
+			fakeRegistry.setError(fmt.Errorf("dial tcp: connection refused"))
+
+			create(newSite())
+			expectCondition(webv1alpha1.ConditionSourceResolved, metav1.ConditionFalse,
+				webv1alpha1.ReasonResolveFailed)
+			expectCondition(webv1alpha1.ConditionBucketReady, metav1.ConditionTrue,
+				webv1alpha1.ReasonBucketReady)
+
+			By("recovering once the registry answers again")
+			fakeRegistry.setError(nil)
+			expectCondition(webv1alpha1.ConditionSourceResolved, metav1.ConditionTrue,
+				webv1alpha1.ReasonResolved)
+			syncToReady(testDigest)
+		})
+
 		It("reports an unresolvable image against SourceResolved", func() {
 			create(newSite(func(s *webv1alpha1.StaticSite) {
 				s.Spec.Source.Image = "registry.example.com/acme/missing:latest"

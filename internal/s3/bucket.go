@@ -16,7 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -309,8 +309,8 @@ func (m *BucketManager) putTags(ctx context.Context, bucket string, tags map[str
 		tagSet = append(tagSet, types.Tag{Key: aws.String(key), Value: aws.String(value)})
 	}
 	// A stable order keeps request bodies comparable in test fixtures and logs.
-	sort.Slice(tagSet, func(i, j int) bool {
-		return aws.ToString(tagSet[i].Key) < aws.ToString(tagSet[j].Key)
+	slices.SortFunc(tagSet, func(a, b types.Tag) int {
+		return strings.Compare(aws.ToString(a.Key), aws.ToString(b.Key))
 	})
 
 	_, err := m.Client.PutBucketTagging(ctx, &s3.PutBucketTaggingInput{

@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,7 +91,10 @@ func buildImage(t *testing.T, layers ...[]tarEntry) v1.Image {
 			t.Fatalf("close tar writer: %v", err)
 		}
 
-		built, err := tarball.LayerFromReader(bytes.NewReader(buffer.Bytes()))
+		layerBytes := buffer.Bytes()
+		built, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(layerBytes)), nil
+		})
 		if err != nil {
 			t.Fatalf("build layer: %v", err)
 		}
@@ -366,7 +370,8 @@ func TestExtractImagePathEnforcesTheByteLimit(t *testing.T) {
 }
 
 func TestExtractImagePathEnforcesTheFileLimit(t *testing.T) {
-	entries := []tarEntry{dir("site")}
+	entries := make([]tarEntry, 0, 6)
+	entries = append(entries, dir("site"))
 	for i := range 5 {
 		entries = append(entries, file("site/page"+string(rune('a'+i))+".html", "x"))
 	}

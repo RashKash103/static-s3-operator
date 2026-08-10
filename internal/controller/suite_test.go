@@ -145,9 +145,10 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	Expect((&StaticSiteReconciler{
-		Client:       manager.GetClient(),
-		Scheme:       manager.GetScheme(),
-		Recorder:     manager.GetEventRecorderFor("staticsite-controller"),
+		Client: manager.GetClient(),
+		Scheme: manager.GetScheme(),
+		// Matches production; see the note in SetupWithManager.
+		Recorder:     manager.GetEventRecorderFor("staticsite-controller"), //nolint:staticcheck // see above
 		Defaults:     defaults,
 		Provisioner:  fakeS3,
 		ResolveImage: fakeRegistry.Resolve,

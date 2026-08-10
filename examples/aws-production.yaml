@@ -1,0 +1,101 @@
+# A site on AWS S3, spelled out.
+#
+# This is what a real production site tends to look like: an explicit region, a
+# cache policy that distinguishes hashed assets from HTML, tags for cost
+# attribution, DNS through external-dns, and resource limits on the sync Job.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: marketing
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/marketing-site:latest
+    path: /usr/share/nginx/html
+    # The tag is re-resolved this often. CI can also ask for a sync immediately by
+    # annotating the resource, which is usually better than waiting:
+    #   kubectl annotate staticsite marketing -n web \
+    #     web.rka.sh/sync-requested-at="$(date -u +%FT%TZ)" --overwrite
+    pullInterval: 24h
+
+  bucket:
+    # Immutable. Bucket names are global per provider, so a name with your domain
+    # in it is unlikely to collide.
+    name: marketing-acme-example-com
+    region: eu-west-1
+
+    website:
+      indexDocument: index.html
+      errorDocument: 404.html
+
+    # A bucket policy granting anonymous s3:GetObject, and the AWS public access
+    # block cleared so that policy takes effect. This is what makes the site
+    # readable by a browser.
+    publicRead: true
+
+    # Deleting this StaticSite empties and removes the bucket -- but only because
+    # the operator created it. A bucket it merely adopted is always retained.
+    # Set Retain if you would rather clean up by hand.
+    deletionPolicy: Delete
+
+    tags:
+      team: web
+      environment: production
+      cost-center: marketing
+
+  sync:
+    # The bucket mirrors the image: a page removed from the site is removed from
+    # the bucket rather than left serving forever.
+    deleteRemoved: true
+
+    # Buckets created since April 2023 have object ACLs disabled, so asking for
+    # public-read is refused. The operator notices and carries on without it, since
+    # the bucket policy is what grants access; setting private skips the attempt.
+    acl: private
+
+    # First match wins, so specific patterns go before broad ones.
+    cacheControl:
+      # Filenames contain a content hash, so these can never go stale.
+      - pattern: "assets/**"
+        value: "public, max-age=31536000, immutable"
+      - pattern: "**/*.{woff,woff2}"
+        value: "public, max-age=31536000, immutable"
+      # HTML must stay revalidated, or a visitor keeps seeing the old site after a
+      # deploy.
+      - pattern: "**/*.html"
+        value: "public, max-age=0, must-revalidate"
+      - pattern: "sitemap.xml"
+        value: "public, max-age=3600"
+
+    # Source maps are useful in CI and not something to publish.
+    excludes:
+      - "**/*.map"
+
+    concurrency: 16
+
+    job:
+      # The site is staged on disk before upload, so ephemeral-storage has to
+      # exceed the extracted size.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+          ephemeral-storage: 1Gi
+        limits:
+          memory: 512Mi
+          ephemeral-storage: 4Gi
+      backoffLimit: 3
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 3600
+
+  service:
+    # external-dns publishes CNAME records for these, pointing at the bucket's
+    # website hostname.
+    hostnames:
+      - www.acme.example.com
+      - acme.example.com
+    annotations:
+      external-dns.alpha.kubernetes.io/ttl: "300"
+    labels:
+      team: web

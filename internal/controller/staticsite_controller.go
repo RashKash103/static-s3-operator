@@ -15,7 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -344,7 +344,7 @@ func (r *StaticSiteReconciler) cachedReference(
 		if effective.PullInterval > 0 && !isDigestReference(effective.Image) {
 			return nil
 		}
-	} else if !status.NextResolveTime.Time.After(now) {
+	} else if !status.NextResolveTime.After(now) {
 		return nil
 	}
 
@@ -367,8 +367,8 @@ func referencesSameImage(pinned, configured string) bool {
 
 // repositoryOf strips a tag or digest, leaving the repository.
 func repositoryOf(reference string) string {
-	if index := strings.Index(reference, "@"); index >= 0 {
-		return reference[:index]
+	if repository, _, found := strings.Cut(reference, "@"); found {
+		return repository
 	}
 	// A colon before the last slash is a registry port, not a tag.
 	lastSlash := strings.LastIndex(reference, "/")
@@ -472,7 +472,7 @@ func (r *StaticSiteReconciler) syncBackoffRemaining(site *webv1alpha1.StaticSite
 		return 0
 	}
 
-	remaining := site.Status.NextSyncTime.Time.Sub(r.now())
+	remaining := site.Status.NextSyncTime.Sub(r.now())
 	if remaining <= 0 {
 		return 0
 	}
@@ -691,8 +691,8 @@ func (r *StaticSiteReconciler) readSyncReport(ctx context.Context, job *batchv1.
 	}
 
 	// The newest Pod owned by this Job is the attempt that decided its outcome.
-	sort.Slice(pods.Items, func(i, j int) bool {
-		return pods.Items[j].CreationTimestamp.Before(&pods.Items[i].CreationTimestamp)
+	slices.SortFunc(pods.Items, func(a, b corev1.Pod) int {
+		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 	})
 
 	for i := range pods.Items {
@@ -786,8 +786,8 @@ func (r *StaticSiteReconciler) pruneSyncJobs(
 		return nil
 	}
 
-	sort.Slice(finished, func(i, j int) bool {
-		return finished[j].CreationTimestamp.Before(&finished[i].CreationTimestamp)
+	slices.SortFunc(finished, func(a, b batchv1.Job) int {
+		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 	})
 
 	policy := metav1.DeletePropagationBackground
@@ -815,10 +815,9 @@ func (r *StaticSiteReconciler) idleRequeue(site *webv1alpha1.StaticSite) time.Du
 		return recheck
 	}
 
-	untilResolve := site.Status.NextResolveTime.Time.Sub(r.now())
-	if untilResolve < time.Second {
-		untilResolve = time.Second
-	}
+	// A resolve time in the past means "now", but a zero requeue would be a hot
+	// loop, so the wait is floored at a second.
+	untilResolve := max(site.Status.NextResolveTime.Sub(r.now()), time.Second)
 	return min(untilResolve, recheck)
 }
 
@@ -939,7 +938,10 @@ func (r *StaticSiteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.ResolveImage = registry.Resolve
 	}
 	if r.Recorder == nil {
-		r.Recorder = mgr.GetEventRecorderFor("staticsite-controller")
+		// The newer events API needs an "action" verb on every call and is still
+		// settling; record.EventRecorder remains what the ecosystem uses, and what
+		// `kubectl describe` shows. Worth revisiting once the new API is the norm.
+		r.Recorder = mgr.GetEventRecorderFor("staticsite-controller") //nolint:staticcheck // see above
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

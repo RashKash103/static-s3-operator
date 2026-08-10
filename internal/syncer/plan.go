@@ -20,7 +20,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -130,7 +130,7 @@ func scanLocal(root, keyPrefix string, excludes GlobSet) ([]LocalFile, int, erro
 	}
 
 	// A stable order makes logs and test expectations reproducible.
-	sort.Slice(files, func(i, j int) bool { return files[i].Key < files[j].Key })
+	slices.SortFunc(files, func(a, b LocalFile) int { return strings.Compare(a.Key, b.Key) })
 	return files, skipped, nil
 }
 
@@ -253,7 +253,7 @@ func buildPlan(
 			}
 			plan.Deletes = append(plan.Deletes, key)
 		}
-		sort.Strings(plan.Deletes)
+		slices.Sort(plan.Deletes)
 	}
 
 	return plan, nil

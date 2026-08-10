@@ -115,9 +115,9 @@ schemas: manifests ## Generate standalone JSON Schemas for the CRDs, for editor 
 SCHEMA_ID_PREFIX ?= https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas
 
 .PHONY: verify-generated
-verify-generated: manifests generate schemas helm-chart ## Fail if generated files are out of date.
+verify-generated: manifests generate schemas build-installer ## Fail if generated files are out of date.
 	@if [ -n "$$(git status --porcelain -- config dist api)" ]; then \
-		echo "Generated files are out of date. Run 'make manifests generate schemas helm-chart' and commit the result:"; \
+		echo "Generated files are out of date. Run 'make manifests generate schemas build-installer' and commit the result:"; \
 		git --no-pager diff -- config dist api; \
 		exit 1; \
 	fi

@@ -29,6 +29,12 @@ import (
 	"time"
 )
 
+// Built-in defaults that appear in more than one place.
+const (
+	defaultRegion        = "us-east-1"
+	defaultIndexDocument = "index.html"
+)
+
 // Defaults are the operator-wide settings.
 type Defaults struct {
 	// SourcePath fills in spec.source.path.
@@ -114,8 +120,8 @@ func New() *Defaults {
 	return &Defaults{
 		SourcePath:    "/usr/share/nginx/html",
 		PullInterval:  24 * time.Hour,
-		Region:        "us-east-1",
-		IndexDocument: "index.html",
+		Region:        defaultRegion,
+		IndexDocument: defaultIndexDocument,
 		ErrorDocument: "404.html",
 
 		ExternalDNSHostnameAnnotation: "external-dns.alpha.kubernetes.io/hostname",

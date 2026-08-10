@@ -53,6 +53,14 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # Table-driven tests repeat literals by design: the whole point of a case is
+      # the value it names, and hoisting each one into a constant makes the table
+      # harder to read rather than easier. Duplicated setup between specs is the
+      # same trade-off.
+      - linters:
+          - goconst
+          - dupl
+        path: _test\.go
     paths:
       - third_party$
       - builtin$

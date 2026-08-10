@@ -63,6 +63,6 @@ func (d *Defaults) ResolveSyncerImage(ctx context.Context, reader client.Reader)
 			return nil
 		}
 	}
-	return fmt.Errorf("Pod %q has no container named %q, so the syncer image is unknown",
+	return fmt.Errorf("pod %q has no container named %q, so the syncer image is unknown",
 		key, ManagerContainerName)
 }

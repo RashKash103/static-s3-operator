@@ -181,7 +181,7 @@ func normalizeRegistryKey(key string) string {
 
 	host, path, hasPath := strings.Cut(key, "/")
 	switch host {
-	case "docker.io", "registry-1.docker.io", "index.docker.io":
+	case "docker.io", "registry-1.docker.io", dockerHubHost:
 		host = dockerHubHost
 	}
 	if hasPath {

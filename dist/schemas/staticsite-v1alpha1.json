@@ -2927,6 +2927,11 @@
           "format": "date-time",
           "type": "string"
         },
+        "nextSyncTime": {
+          "description": "nextSyncTime is the earliest the operator will start another sync after a\nfailure. It backs off exponentially with failedSyncs, and exists so that a\nsite whose syncs keep failing does not start a new Job every time the last\none's status changes. It is cleared on success, and ignored when a sync is\nrequested by annotation.",
+          "format": "date-time",
+          "type": "string"
+        },
         "observedGeneration": {
           "description": "observedGeneration is the metadata.generation this status was computed\nfrom.",
           "format": "int64",

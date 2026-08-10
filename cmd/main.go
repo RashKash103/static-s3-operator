@@ -213,9 +213,11 @@ func main() {
 		"defaultPullInterval", defaults.PullInterval.String())
 
 	if err := (&controller.StaticSiteReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		Recorder:    mgr.GetEventRecorderFor("staticsite-controller"),
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		// record.EventRecorder rather than the newer events API: see the note in
+		// SetupWithManager.
+		Recorder:    mgr.GetEventRecorderFor("staticsite-controller"), //nolint:staticcheck // see above
 		Defaults:    defaults,
 		Provisioner: provisioner.NewS3Provisioner(defaults.RequestChecksumWhenSupported, defaults.SkipTLSVerify),
 	}).SetupWithManager(mgr); err != nil {

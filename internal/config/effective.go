@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"strings"
 	"text/template"
@@ -181,9 +182,7 @@ func (d *Defaults) applyServiceDefaults(site *webv1alpha1.StaticSite, e *Effecti
 	if d.ExternalDNSHostnameAnnotation != "" && len(service.Hostnames) > 0 {
 		annotations[d.ExternalDNSHostnameAnnotation] = strings.Join(service.Hostnames, ",")
 	}
-	for key, value := range service.Annotations {
-		annotations[key] = value
-	}
+	maps.Copy(annotations, service.Annotations)
 	if len(annotations) > 0 {
 		e.ServiceAnnotations = annotations
 	}
@@ -246,6 +245,8 @@ type websiteURLData struct {
 // awsDashWebsiteRegions are the AWS regions whose website endpoints use
 // "s3-website-<region>" rather than "s3-website.<region>". AWS keeps both forms
 // working for the older regions, but only the dash form for some of them.
+//
+//nolint:goconst // these are region identifiers in a lookup table, not repeated logic
 var awsDashWebsiteRegions = map[string]bool{
 	"us-east-1":      true,
 	"us-west-1":      true,

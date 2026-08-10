@@ -52,7 +52,6 @@ type fakeBucket struct {
 	ownershipToken string
 	siteUID        string
 	site           string
-	website        *webv1alpha1.WebsiteSpec
 	policy         string
 	tags           map[string]string
 	deleted        bool

@@ -1,0 +1,46 @@
+# A single page application routed on the client.
+#
+# The one thing that matters here is the error document: a client-routed app has no
+# object at /about, so the bucket must answer that request with index.html and let
+# the app's router take over. Pointing errorDocument at index.html is what does it.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: dashboard
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/dashboard:latest
+    # A Vite or Create React App build lands here in a typical image.
+    path: /app/dist
+
+  bucket:
+    name: acme-dashboard
+    website:
+      indexDocument: index.html
+      # Serve the app for any path it does not have a file for, so deep links work.
+      #
+      # This does mean a genuinely missing asset also returns index.html with a 404
+      # status rather than an error page. That is the accepted trade-off for client
+      # side routing on S3.
+      errorDocument: index.html
+
+  sync:
+    deleteRemoved: true
+    cacheControl:
+      # The bundler puts a content hash in these filenames, so they are immutable.
+      - pattern: "assets/**"
+        value: "public, max-age=31536000, immutable"
+      # index.html is the one file that must never be cached: it is what points at
+      # the current bundle, and a stale copy points at a bundle that is gone.
+      - pattern: "index.html"
+        value: "no-cache, no-store, must-revalidate"
+      - pattern: "**/*.html"
+        value: "public, max-age=0, must-revalidate"
+    excludes:
+      - "**/*.map"
+
+  service:
+    hostnames:
+      - dashboard.acme.example.com

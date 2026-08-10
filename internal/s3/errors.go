@@ -14,6 +14,7 @@ package s3
 import (
 	"errors"
 	"net/http"
+	"slices"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/smithy-go"
@@ -47,12 +48,7 @@ func hasCode(err error, codes ...string) bool {
 	if actual == "" {
 		return false
 	}
-	for _, code := range codes {
-		if actual == code {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(codes, actual)
 }
 
 // IsNotFound reports that the bucket or object does not exist.

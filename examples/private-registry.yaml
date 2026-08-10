@@ -1,0 +1,54 @@
+# A site whose image lives in a private registry.
+#
+# Two different things need credentials, and they are separate on purpose:
+#
+#   * spec.source.imagePullSecrets authenticates the site image. The operator uses
+#     it to resolve the tag to a digest, and the sync Job uses it to download the
+#     layers -- the Job pulls over the registry API itself, so a kubelet pull
+#     secret alone is not enough.
+#   * spec.sync.job.imagePullSecrets is only for the syncer image, and is needed
+#     only if you mirror the operator's own image somewhere private.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ghcr-pull
+  namespace: web
+type: kubernetes.io/dockerconfigjson
+stringData:
+  # Create this properly with:
+  #   kubectl create secret docker-registry ghcr-pull -n web \
+  #     --docker-server=ghcr.io \
+  #     --docker-username="$GITHUB_ACTOR" \
+  #     --docker-password="$GITHUB_TOKEN"
+  .dockerconfigjson: |
+    {"auths":{"ghcr.io":{"username":"REPLACE_ME","password":"REPLACE_ME"}}}
+---
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: internal-docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/internal-docs:latest
+    imagePullSecrets:
+      - name: ghcr-pull
+
+  bucket:
+    name: acme-internal-docs
+    website:
+      indexDocument: index.html
+
+    # Internal, so not world readable. Something in front of the bucket -- a CDN
+    # with an origin identity, or a proxy -- reads it with its own credentials.
+    publicRead: false
+
+  sync:
+    # A bucket that is not public cannot take public-read object grants either.
+    acl: private
+    deleteRemoved: true
+
+  service:
+    hostnames:
+      - internal-docs.acme.example.com

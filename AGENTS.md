@@ -1,5 +1,173 @@
 # static-s3-operator - AI Agent Guide
 
+## This project in particular
+
+The generic Kubebuilder guidance below still applies. Read this part first, because
+it is what is specific to this repository.
+
+### What it does
+
+A `StaticSite` names a container image and a directory inside it, and an S3 bucket.
+The operator makes the bucket serve that directory as a website: it creates the
+bucket, configures website hosting and a public-read policy, and mirrors the files.
+When the image tag starts pointing at a new digest, it republishes.
+
+### Two binaries, one image
+
+`cmd/main.go` is the manager. `cmd/syncer/main.go` is the syncer, which runs as a
+Job, one per publish.
+
+They ship in the same image on purpose, and the manager discovers its own image by
+reading its own Pod (`internal/config/selfimage.go`) so the two cannot drift apart
+across an upgrade. If you add a Dockerfile stage or change the entrypoint, keep
+`/manager` and `/syncer` both present at the image root.
+
+The Job has **no Kubernetes API access at all** — no token, no RBAC. It reports back
+through its container termination message (`internal/syncer/report.go`). Do not
+reach for the API from the syncer; add a field to the report instead.
+
+### Things that look like bugs but are deliberate
+
+Before "fixing" any of these, read the comment that explains it. Each one is load
+bearing.
+
+- **Some fields have no `+kubebuilder:default`.** `spec.source.path`,
+  `spec.source.pullInterval`, `spec.bucket.region`, `spec.bucket.endpoint` and the
+  website documents are defaulted by the operator, not the CRD, so the Helm chart
+  can choose them once for a cluster. Adding a CRD default to one of these takes
+  that away. See `internal/config`.
+- **Website configuration and public access blocks failing is not fatal.** Several
+  S3-compatible providers reject `PutBucketWebsite` and `PutPublicAccessBlock` with
+  a 400. Making those fatal makes the operator unusable on those providers.
+- **Checksums are requested only where the API requires them.** The AWS SDK's
+  newer trailing-CRC32 default is rejected by several compatible providers.
+- **Bucket policies are compared after canonicalisation.** Providers rewrite
+  `"Principal": "*"` and single-element arrays as they store them; a naive
+  comparison rewrites the policy on every reconcile.
+- **Files are compared by content hash, never by timestamp.** Everything extracted
+  from an image carries the image's build time.
+- **Content types come from a built-in extension table before Go's.** Go's is
+  seeded from `/etc/mime.types`, so the same site would upload differently from two
+  machines.
+- **`status.nextSyncTime` exists because a finished Job produces a watch event.**
+  Without it the retry backoff is ignored and a failing site becomes a
+  Job-creating loop.
+- **The provisioner recovers ownership from a bucket tagged with the site's own
+  UID.** A reconcile immediately after bucket creation can read the resource from a
+  cache that has not caught up, and would otherwise mistake the site's own bucket
+  for somebody else's.
+- **`patchStatus` skips a no-op write.** An unconditional status write produces an
+  update event, which reconciles again, which writes status again.
+
+### Bucket ownership is the safety property
+
+`spec.bucket.deletionPolicy` defaults to `Delete`, so deleting a `StaticSite`
+deletes its bucket. The guard is a random token written into the bucket's tags (or
+a marker object on a provider without tagging) and recorded in
+`status.bucketOwnership`. Deletion requires both to agree.
+
+If you touch `internal/s3/ownership.go`, `internal/provisioner/s3.go` or the
+deletion path in the controller, keep these invariants:
+
+- A bucket with no ownership record is **never** deleted, whatever the policy says.
+- Reconciling the tag set always re-includes the ownership tags, so a tag update
+  cannot drop the token.
+- A site tag using the reserved `static-s3-operator/` prefix is discarded, so a
+  `StaticSite` cannot forge a token.
+- The marker object carries a token and nothing else: no cluster, namespace or
+  resource names, because a public bucket makes it readable.
+- Teardown that keeps failing releases the finalizer after
+  `--sync-retry-max-delay` with a warning naming the leaked bucket, rather than
+  leaving a namespace stuck in `Terminating`.
+
+The end-to-end suite tests the important half of this: a bucket the operator did
+not create survives deletion of the resource pointing at it. Keep that spec.
+
+### Testing layers
+
+| Command | What it covers | Needs |
+| --- | --- | --- |
+| `make test` | Unit tests, the controller suite against a real API server, and every example applied to one | envtest binaries |
+| `make test-integration` | `internal/s3` and `internal/syncer` against a real S3 API | Docker |
+| `make test-e2e` | The whole loop: image build, in-cluster registry and object store, a generated sample site, and an anonymous HTTP fetch of the result | Docker, Kind |
+
+The controller suite replaces exactly two things: the S3 provider
+(`provisioner.Provisioner`) and the registry resolver. Everything else is the
+production path. Keep that seam — do not add a mock for the reconcile loop itself.
+
+envtest runs no Job controller, so a test that wants a publish to finish sets the
+Job's status itself. The API server enforces the real two-step transition
+(`SuccessCriteriaMet` then `Complete`, `FailureTarget` then `Failed`); see
+`finishJob` in `internal/controller/staticsite_controller_test.go`.
+
+Integration tests are behind the `integration` build tag and skip without
+`S3_TEST_ENDPOINT`. They run against a real server on purpose: what they check is
+how a provider behaves, and a mock built from this code's own assumptions would
+agree with those assumptions and prove nothing.
+
+`test/examples` applies every file in `examples/` and `config/samples/` to a real
+API server. If you add an example, it is checked automatically; if you change the
+API, a stale example fails the build.
+
+### Regenerating things
+
+```sh
+make manifests generate   # CRDs, RBAC, deepcopy
+make schemas              # standalone JSON Schemas for the CRDs, into dist/schemas
+make helm-lint            # lint and render the chart
+```
+
+CI fails if any of these leaves the tree dirty.
+
+**The Helm chart is generated**, and regenerating it overwrites the plugin's own
+files:
+
+```sh
+kubebuilder edit --plugins=helm/v2-alpha --force
+```
+
+Afterwards, re-apply the one hand-written hunk in
+`dist/chart/templates/manager/manager.yaml`:
+
+```
+{{- include "static-s3-operator.operatorArgs" . | nindent 8 }}
+```
+
+Everything else specific to this project lives in files the plugin does not
+generate — `templates/_operator.tpl`, `templates/operator/credentials.yaml`,
+`values.schema.json` — and the `operator:` block in `values.yaml`, which is worth
+checking survived. `make helm-chart` prints this reminder.
+
+### Adding a setting
+
+A new cluster-wide default touches four places, in this order:
+
+1. `internal/config/config.go` — the field, its flag in `BindFlags`, and validation
+   in `Validate`.
+2. `internal/config/effective.go` — resolve it in `Effective`, and decide whether it
+   belongs in `SyncSpecHash`. It belongs there only if changing it changes what gets
+   uploaded; putting an unrelated setting in the hash re-uploads every site in the
+   cluster when it changes.
+3. `dist/chart/templates/_operator.tpl` and `values.yaml`, plus `values.schema.json`.
+4. `docs/configuration.md`.
+
+A new `StaticSite` field additionally needs the type in `api/v1alpha1`,
+`make manifests generate schemas`, and usually an example.
+
+### Conventions
+
+- Comments explain **why**, not what. The code says what it does; a comment earns
+  its place by recording the reason, the trade-off, or the failure it prevents.
+- Errors say what failed and name the thing: `create bucket %q: %w`.
+- Log messages follow the Kubernetes style guide (capitalised, no trailing period,
+  past tense, balanced key-value pairs).
+- Provider quirks are classified in `internal/s3/errors.go`, not spread through
+  call sites. `IsUnsupportedRequest` is deliberately broad and used **only** for
+  website configuration and public access blocks; do not widen its use to calls
+  where a malformed request could be this code's own fault.
+- Tests name the behaviour, not the function: `TestSyncSkipsUnchangedFiles`, not
+  `TestSync2`.
+
 ## Project Structure
 
 **Single-group layout (default):**

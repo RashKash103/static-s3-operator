@@ -13,6 +13,7 @@ package controller
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -65,18 +66,11 @@ func (r *StaticSiteReconciler) buildSyncJob(
 		webv1alpha1.SyncHashLabel:  shortHash(syncHash),
 	}
 
-	podLabels := map[string]string{}
-	for key, value := range labels {
-		podLabels[key] = value
-	}
+	podLabels := maps.Clone(labels)
 	podAnnotations := map[string]string{}
 	if jobSpec.PodMetadata != nil {
-		for key, value := range jobSpec.PodMetadata.Labels {
-			podLabels[key] = value
-		}
-		for key, value := range jobSpec.PodMetadata.Annotations {
-			podAnnotations[key] = value
-		}
+		maps.Copy(podLabels, jobSpec.PodMetadata.Labels)
+		maps.Copy(podAnnotations, jobSpec.PodMetadata.Annotations)
 	}
 
 	container := corev1.Container{
@@ -207,10 +201,19 @@ func syncerArgs(
 	return args
 }
 
+// awsAccessKeyIDEnv and the two below are the standard AWS variable names, used so
+// a Job can take its credentials straight from a Secret with nothing bespoke.
+const (
+	awsAccessKeyIDEnv     = "AWS_ACCESS_KEY_ID"
+	awsSecretAccessKeyEnv = "AWS_SECRET_ACCESS_KEY"
+	awsSessionTokenEnv    = "AWS_SESSION_TOKEN"
+)
+
 func syncerEnv(credentials *resolvedCredentials) []corev1.EnvVar {
-	env := []corev1.EnvVar{
-		{
-			Name: "AWS_ACCESS_KEY_ID",
+	env := make([]corev1.EnvVar, 0, 3)
+	env = append(env,
+		corev1.EnvVar{
+			Name: awsAccessKeyIDEnv,
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: credentials.SecretName},
@@ -218,8 +221,8 @@ func syncerEnv(credentials *resolvedCredentials) []corev1.EnvVar {
 				},
 			},
 		},
-		{
-			Name: "AWS_SECRET_ACCESS_KEY",
+		corev1.EnvVar{
+			Name: awsSecretAccessKeyEnv,
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: credentials.SecretName},
@@ -227,13 +230,13 @@ func syncerEnv(credentials *resolvedCredentials) []corev1.EnvVar {
 				},
 			},
 		},
-	}
+	)
 
 	// Temporary credentials need a session token; long-lived access keys have
 	// none, and an optional reference keeps the Pod from failing to start when the
 	// key is simply absent.
 	env = append(env, corev1.EnvVar{
-		Name: "AWS_SESSION_TOKEN",
+		Name: awsSessionTokenEnv,
 		ValueFrom: &corev1.EnvVarSource{
 			SecretKeyRef: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: credentials.SecretName},
@@ -345,7 +348,7 @@ func classifyJob(job *batchv1.Job) (jobOutcome, string) {
 		case batchv1.JobFailed:
 			message := condition.Message
 			if message == "" {
-				message = string(condition.Reason)
+				message = condition.Reason
 			}
 			return jobFailed, message
 		}

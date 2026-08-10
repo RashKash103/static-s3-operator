@@ -35,10 +35,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/google/go-containerregistry/pkg/authn"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/rashkash103/static-s3-operator/internal/registry"
@@ -129,7 +129,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	report, err := run(ctx, opts, log)
+	// The logger travels in the context, the way controller-runtime does it, so
+	// run and everything below it takes one argument rather than two.
+	ctx = logf.IntoContext(ctx, log)
+
+	report, err := run(ctx, opts)
 	if err != nil {
 		report.Succeeded = false
 		report.Message = err.Error()
@@ -223,7 +227,8 @@ func (o *options) validate() error {
 	return nil
 }
 
-func run(ctx context.Context, opts *options, log logr.Logger) (syncer.Report, error) {
+func run(ctx context.Context, opts *options) (syncer.Report, error) {
+	log := logf.FromContext(ctx)
 	report := syncer.Report{}
 
 	if err := opts.validate(); err != nil {

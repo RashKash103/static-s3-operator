@@ -14,7 +14,7 @@ package s3
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -111,8 +111,8 @@ func canonicalizePolicyValue(value any, key string) any {
 			return items[0]
 		}
 		// Action and Resource lists are unordered sets.
-		sort.Slice(items, func(i, j int) bool {
-			return fmt.Sprintf("%v", items[i]) < fmt.Sprintf("%v", items[j])
+		slices.SortFunc(items, func(a, b any) int {
+			return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
 		})
 		return items
 

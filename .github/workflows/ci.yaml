@@ -48,16 +48,8 @@ jobs:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache: true
 
-      - name: Regenerate CRDs, RBAC, deepcopy and schemas
-        run: make manifests generate schemas
-
-      - name: Fail if anything changed
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Generated files are out of date. Run 'make manifests generate schemas' and commit the result."
-            git --no-pager diff
-            exit 1
-          fi
+      - name: Regenerate everything derived from the code
+        run: make verify-generated
 
   unit:
     name: Unit and controller tests

@@ -1,0 +1,86 @@
+# A site on a non-AWS, S3-compatible object store.
+#
+# Three things usually differ from AWS: the endpoint, path-style bucket addressing,
+# and the website hostname. This example also uses a per-site credentials Secret,
+# which is how one cluster publishes to more than one provider or account.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: v1
+kind: Secret
+metadata:
+  name: object-store-credentials
+  namespace: web
+type: Opaque
+stringData:
+  # In a real cluster this Secret comes from External Secrets, Sealed Secrets, SOPS
+  # or a CSI driver rather than from a file like this one.
+  accessKeyID: REPLACE_ME
+  secretAccessKey: REPLACE_ME
+---
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:latest
+
+  bucket:
+    name: acme-docs
+    region: us-east-1
+
+    # The provider's S3 API endpoint. Without a scheme, https is assumed.
+    endpoint: https://us-east-1.example-object-store.com
+
+    # Most compatible providers address a bucket as endpoint/bucket rather than
+    # bucket.endpoint. AWS is the exception.
+    forcePathStyle: true
+
+    # Where a browser reaches the site. Set this when the provider's website
+    # hostname differs from its API endpoint, which is common. It is also what the
+    # generated ExternalName Service points at, so getting it right is what makes
+    # DNS work.
+    #
+    # Without it, the operator guesses from the endpoint: with forcePathStyle that
+    # guess is "endpoint/bucket/", which a CNAME cannot express.
+    websiteEndpointTemplate: "http://{{ .Bucket }}.website-{{ .Region }}.example-object-store.com"
+
+    website:
+      indexDocument: index.html
+      errorDocument: 404.html
+
+    credentials:
+      secretRef:
+        name: object-store-credentials
+
+  sync:
+    deleteRemoved: true
+
+    # Some compatible providers reject per-object ACLs. The operator drops the ACL
+    # by itself after the first refusal, and setting private skips the attempt.
+    # Public access comes from the bucket policy either way.
+    acl: private
+
+    cacheControl:
+      - pattern: "assets/**"
+        value: "public, max-age=31536000, immutable"
+      - pattern: "**/*.html"
+        value: "public, max-age=0, must-revalidate"
+
+  service:
+    hostnames:
+      - docs.acme.example.com
+
+# Notes on providers that do not implement every part of the S3 API:
+#
+#   * No PutBucketWebsite: the site is served, but a request for a directory is not
+#     rewritten to index.html. The BucketReady condition says so. Link to files
+#     directly, or put a CDN in front that does the rewrite.
+#   * No bucket tagging: the ownership token goes into a marker object at
+#     .static-s3-operator-ownership.json instead. It holds a random token and
+#     nothing identifying, because a public bucket makes it readable.
+#   * No public access blocks: nothing to clear, and the bucket policy alone makes
+#     the site readable.
+#
+# The operator treats each of these as absent rather than broken, so none of them
+# stops a site from publishing.

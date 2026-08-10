@@ -1,0 +1,43 @@
+# Publishing into a bucket you create and manage yourself.
+#
+# With create: false the operator never calls CreateBucket, so its credentials do
+# not need that permission at all -- see
+# docs/policies/operator-policy-adopt-only.json for a policy without it.
+#
+# A bucket the operator did not create carries no ownership token, and a bucket
+# without a token is never deleted. spec.bucket.deletionPolicy has no effect here;
+# deleting this StaticSite leaves the bucket and its contents exactly as they are.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:latest
+
+  bucket:
+    # This bucket must already exist. If it does not, the site reports
+    # BucketReady=False rather than creating it.
+    name: acme-docs-managed-by-terraform
+    region: eu-west-1
+    create: false
+
+    # Terraform owns the bucket's website configuration and policy, so the operator
+    # is told to leave both alone and only manage the contents.
+    website: null
+    publicRead: false
+
+  sync:
+    deleteRemoved: true
+    acl: private
+    # Anything matching an exclude is neither uploaded nor deleted, so files that
+    # another system puts in the bucket survive a mirroring sync.
+    excludes:
+      - "logs/**"
+      - "backups/**"
+
+  service:
+    # DNS is managed alongside the bucket, elsewhere.
+    enabled: false

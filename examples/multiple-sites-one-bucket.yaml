@@ -1,0 +1,59 @@
+# Two sites sharing one bucket, each under its own prefix.
+#
+# Useful for versioned documentation, or for keeping one hostname and one CDN
+# distribution in front of several independently published sites.
+#
+# The important detail is that only the first site owns the bucket. The operator
+# records an ownership token when it creates a bucket, and the second site adopts
+# what it finds -- so deleting the second site never removes the bucket, while
+# deleting the first one would. Set Retain on the owner if you would rather that
+# never happen by accident.
+#
+# Each site's deleteRemoved is confined to its own prefix, so neither can delete
+# the other's files.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs-v1
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:v1
+  bucket:
+    name: acme-docs-versions
+    website:
+      indexDocument: index.html
+      errorDocument: 404.html
+    # This site creates the bucket, so it is the one that owns it. Retain means a
+    # mistaken deletion here does not take the other site's content with it.
+    deletionPolicy: Retain
+  sync:
+    keyPrefix: v1
+    deleteRemoved: true
+  service:
+    # Only one Service is needed for a shared hostname; the other site turns it off.
+    hostnames:
+      - docs.acme.example.com
+---
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs-v2
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:v2
+  bucket:
+    name: acme-docs-versions
+    website:
+      indexDocument: index.html
+      errorDocument: 404.html
+    # The bucket already exists by the time this site reconciles, so it is adopted
+    # and will never be deleted by the operator whatever this says.
+    deletionPolicy: Retain
+  sync:
+    keyPrefix: v2
+    deleteRemoved: true
+  service:
+    enabled: false

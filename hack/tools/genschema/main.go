@@ -28,11 +28,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
+)
+
+// JSON Schema keywords this tool writes.
+const (
+	schemaType        = "type"
+	schemaDescription = "description"
 )
 
 func main() {
@@ -155,19 +161,19 @@ func buildSchema(
 	// structural schema, so an editor validating a plain manifest needs them
 	// spelled out or it will reject a perfectly valid file.
 	properties["apiVersion"] = map[string]any{
-		"type":        "string",
-		"description": "APIVersion of this resource.",
-		"const":       apiVersion,
+		schemaType:        "string",
+		schemaDescription: "APIVersion of this resource.",
+		"const":           apiVersion,
 	}
 	properties["kind"] = map[string]any{
-		"type":        "string",
-		"description": "Kind of this resource.",
-		"const":       crd.Spec.Names.Kind,
+		schemaType:        "string",
+		schemaDescription: "Kind of this resource.",
+		"const":           crd.Spec.Names.Kind,
 	}
 	if _, hasMetadata := properties["metadata"]; !hasMetadata {
 		properties["metadata"] = map[string]any{
-			"type":        "object",
-			"description": "Standard object metadata.",
+			schemaType:        "object",
+			schemaDescription: "Standard object metadata.",
 		}
 	}
 
@@ -204,7 +210,7 @@ func mergeRequired(existing any, names ...string) []string {
 		}
 	}
 
-	sort.Strings(required)
+	slices.Sort(required)
 	return required
 }
 
@@ -217,11 +223,11 @@ type indexEntry struct {
 // writeIndex records which schema covers which kind, so tooling that maps a
 // manifest to a schema does not have to open every file to find out.
 func writeIndex(outputDir string, entries []indexEntry) error {
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Kind != entries[j].Kind {
-			return entries[i].Kind < entries[j].Kind
+	slices.SortFunc(entries, func(a, b indexEntry) int {
+		if a.Kind != b.Kind {
+			return strings.Compare(a.Kind, b.Kind)
 		}
-		return entries[i].APIVersion < entries[j].APIVersion
+		return strings.Compare(a.APIVersion, b.APIVersion)
 	})
 
 	encoded, err := json.MarshalIndent(map[string]any{"schemas": entries}, "", "  ")

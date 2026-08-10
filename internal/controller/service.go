@@ -14,6 +14,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -83,18 +84,14 @@ func (r *StaticSiteReconciler) reconcileService(
 		}
 		service.Labels[webv1alpha1.ManagedByLabel] = webv1alpha1.ManagedByValue
 		service.Labels[webv1alpha1.SiteNameLabel] = site.Name
-		for key, value := range effective.ServiceLabels {
-			service.Labels[key] = value
-		}
+		maps.Copy(service.Labels, effective.ServiceLabels)
 
 		// Annotations are merged rather than replaced, so a hostname written by
 		// something else on the same Service is not clobbered.
 		if service.Annotations == nil {
 			service.Annotations = map[string]string{}
 		}
-		for key, value := range effective.ServiceAnnotations {
-			service.Annotations[key] = value
-		}
+		maps.Copy(service.Annotations, effective.ServiceAnnotations)
 
 		service.Spec.Type = corev1.ServiceTypeExternalName
 		service.Spec.ExternalName = effective.ServiceExternalName

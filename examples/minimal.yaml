@@ -1,0 +1,20 @@
+# The smallest useful StaticSite.
+#
+# Everything not named here comes from the operator's defaults, which the Helm
+# chart sets once for the cluster: the directory inside the image, the region, the
+# index and error documents, and how often a moving tag is re-checked.
+#
+# As written, this creates the bucket "acme-docs", configures it for website
+# hosting, makes it publicly readable, and mirrors /usr/share/nginx/html out of the
+# image into it. Deleting this resource deletes the bucket.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:latest
+  bucket:
+    name: acme-docs
