@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: test-chart-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
@@ -50,6 +54,22 @@ jobs:
         run: |
           helm lint ./dist/chart
 
+      - name: Check that values.schema.json is enforced
+        # helm lint only applies the schema to the values it is given, so an
+        # explicitly invalid value is what proves the schema is doing its job.
+        run: |
+          if helm template static-s3-operator ./dist/chart \
+              --set operator.defaults.sourcePath=not-absolute >/dev/null 2>&1; then
+            echo "::error::values.schema.json did not reject a relative sourcePath"
+            exit 1
+          fi
+          if helm template static-s3-operator ./dist/chart \
+              --set operator.credentials.create=true >/dev/null 2>&1; then
+            echo "::error::values.schema.json did not reject create without an access key"
+            exit 1
+          fi
+          echo "values.schema.json rejects invalid values as expected."
+
 # TODO: Uncomment if cert-manager is enabled
 #      - name: Install cert-manager via Helm (wait for readiness)
 #        run: |
@@ -70,9 +90,38 @@ jobs:
 #          helm install prometheus-crds prometheus-community/prometheus-operator-crds
 
       - name: Deploy manager via Helm
+        # Credentials come from a Secret the user manages, which is the documented
+        # path; the operator reads them per site rather than at startup, so no S3
+        # server is needed for this smoke test.
         run: |
-          make helm-deploy
+          kubectl create namespace static-s3-operator-system
+          kubectl create secret generic s3-credentials \
+            --namespace static-s3-operator-system \
+            --from-literal=accessKeyID=smoke-test \
+            --from-literal=secretAccessKey=smoke-test
+          make helm-deploy HELM_EXTRA_ARGS="--set operator.credentials.existingSecret=s3-credentials --set metrics.enabled=false"
 
       - name: Check Helm release status
         run: |
           make helm-status
+
+      - name: Confirm the manager started and read its configuration
+        run: |
+          kubectl -n static-s3-operator-system rollout status \
+            deployment/static-s3-operator-controller-manager --timeout=3m
+          # The manager logs its resolved settings at startup, including the syncer
+          # image it discovered from its own Pod. Missing that line means it failed
+          # its configuration check.
+          kubectl -n static-s3-operator-system logs \
+            deployment/static-s3-operator-controller-manager --tail=200 \
+            | tee /tmp/manager.log
+          grep -q "Resolved operator configuration" /tmp/manager.log
+
+      - name: Confirm the CRD is installed and usable
+        run: |
+          kubectl get crd staticsites.web.rka.sh
+          # The example names its own namespace, so it has to exist for a
+          # server-side dry run to get as far as validating the resource.
+          kubectl create namespace web
+          kubectl apply -f examples/minimal.yaml --dry-run=server
+          kubectl explain staticsite.spec.source --recursive | head -20

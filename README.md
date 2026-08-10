@@ -423,6 +423,11 @@ image, and then fetches the result over plain HTTP the way a browser would. It
 also republishes a second version to check that removed files are removed, and
 that a bucket the operator did not create survives deletion.
 
+CI runs the same targets: `lint`, `test` (unit, controller and examples),
+`test-integration` (against a local S3 server), `test-chart` (renders the chart,
+installs it, and checks the manager starts), `test-e2e`, and `verify-generated`,
+which fails if anything derived from the code has drifted.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: test-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
@@ -12,6 +16,10 @@ jobs:
       contents: read
     name: Run on Ubuntu
     runs-on: ubuntu-latest
+    # The suite builds the operator image, deploys an object store and a container
+    # registry into a Kind cluster, publishes a generated sample site through the
+    # chart-installed operator, and fetches the result over HTTP.
+    timeout-minutes: 45
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -32,7 +40,21 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      # The suite installs the operator through the chart, which is the path users
+      # follow, so Helm has to be present before it runs.
+      - name: Install Helm
+        run: make install-helm
+
       - name: Running Test e2e
+        run: make test-e2e
+
+      # A failed end-to-end run is only useful if you can see why.
+      - name: Describe the cluster on failure
+        if: failure()
         run: |
-          go mod tidy
-          make test-e2e
+          kubectl get staticsites -A -o yaml || true
+          kubectl get jobs,pods,services -A || true
+          kubectl -n static-s3-e2e describe pods || true
+          kubectl -n static-s3-operator-system logs \
+            deployment/static-s3-operator-controller-manager \
+            --tail=500 --all-containers || true

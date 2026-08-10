@@ -2,7 +2,8 @@
 # Ignore everything by default and re-include only needed files
 **
 
-# Re-include Go source files (but not *_test.go)
+# Re-include Go source files (but not *_test.go). This covers both binaries the
+# image builds, cmd/main.go and cmd/syncer/main.go.
 !**/*.go
 **/*_test.go
 

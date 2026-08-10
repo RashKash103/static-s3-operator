@@ -1,0 +1,43 @@
+# Dependency updates.
+#
+# An operator's blast radius is its dependencies: the AWS SDK decides how it talks
+# to every provider, controller-runtime decides how it talks to the API server, and
+# go-containerregistry decides what it will accept from a registry. Keeping those
+# current matters more here than in most projects, and the test suites are what
+# make the updates safe to take.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # The Kubernetes libraries move in lockstep; one PR per week rather than a
+      # dozen that cannot be merged independently anyway.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      aws-sdk:
+        patterns:
+          - "github.com/aws/*"
+      test-tooling:
+        patterns:
+          - "github.com/onsi/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    # The builder and runtime base images in the Dockerfile.
+    directory: /
+    schedule:
+      interval: weekly

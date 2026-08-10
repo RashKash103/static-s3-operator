@@ -1,0 +1,36 @@
+name: Integration Tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: test-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  integration:
+    permissions:
+      contents: read
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      # internal/s3 and internal/syncer run against a real S3 API rather than a
+      # mock, because what they check is how a provider behaves: which optional
+      # calls it implements, how it rewrites a bucket policy as it stores one, and
+      # whether an unchanged file is skipped. The Makefile target starts and stops
+      # a local S3 server in Docker for the run.
+      - name: Run integration tests against a local S3 server
+        run: make test-integration

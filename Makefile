@@ -141,20 +141,17 @@ helm-lint: ## Lint and render the Helm chart.
 		--set operator.credentials.secretAccessKey=test >/dev/null
 	@echo "Helm chart renders cleanly."
 
-# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# kubectl kuberc is disabled by default for test isolation; enable with:
-# - KUBECTL_KUBERC=true
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
+# The e2e suite runs the whole thing in a throwaway Kind cluster: it builds the
+# operator image, deploys an object store and a container registry, publishes a
+# generated sample site, and fetches the result over HTTP. It needs Docker and
+# Kind, and installs no cert-manager, because this operator has no webhooks.
+#
+# kubectl kuberc is disabled during the run so local kubectl preferences cannot
+# change how the commands behave; enable it with KUBECTL_KUBERC=true.
 KIND_CLUSTER ?= static-s3-operator-test-e2e
 
 .PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
+setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
 	@case "$$($(KIND) get clusters)" in \
 		*"$(KIND_CLUSTER)"*) \
 			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
@@ -262,7 +259,9 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUBECTL ?= kubectl
-KIND ?= kind
+# Prefer a kind already on PATH, and fall back to the one `make kind` downloads,
+# so `make test-e2e` works on a machine that has never installed it.
+KIND ?= $(shell command -v kind 2>/dev/null || echo "$(LOCALBIN)/kind")
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
@@ -308,11 +307,16 @@ $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: kind
-kind: ## Download kind locally if it is not already installed.
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Installing kind $(KIND_VERSION) into $(LOCALBIN)..."; \
-		$(call go-install-tool,$(LOCALBIN)/kind,sigs.k8s.io/kind,$(KIND_VERSION)) \
-	}
+kind: ## Download kind into bin/ if it is not already on PATH.
+	@if command -v $(KIND) >/dev/null 2>&1; then \
+		echo "Using $$($(KIND) version | head -1)"; \
+	else \
+		echo "kind is not on PATH; installing $(KIND_VERSION) into $(LOCALBIN)"; \
+		$(MAKE) --no-print-directory $(LOCALBIN)/kind; \
+	fi
+
+$(LOCALBIN)/kind: $(LOCALBIN)
+	$(call go-install-tool,$(LOCALBIN)/kind,sigs.k8s.io/kind,$(KIND_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
