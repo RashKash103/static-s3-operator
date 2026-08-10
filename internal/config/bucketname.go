@@ -19,6 +19,8 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/google/uuid"
+
 	webv1alpha1 "github.com/rashkash103/static-s3-operator/api/v1alpha1"
 )
 
@@ -34,13 +36,26 @@ const (
 
 // BucketNameData is what a bucket name template is rendered with.
 type BucketNameData struct {
-	// Namespace is the StaticSite's namespace.
+	// OpaqueID is a version 5 UUID derived from the site's namespace and name
+	// under the cluster's UUID namespace. It is what the default template uses.
+	//
+	// A bucket name reaches the public internet: it appears in the website
+	// hostname, and so in any CNAME record pointing at the site. Putting the
+	// Kubernetes namespace and resource name in it publishes an inventory of the
+	// cluster to anyone who looks up the DNS. This does not.
+	OpaqueID string
+	// ShortID is the first twelve hex digits of OpaqueID, for a template that needs
+	// to leave room for a long prefix. It is still 48 bits of the digest.
+	ShortID string
+
+	// Namespace is the StaticSite's namespace. Using it in a template puts it in
+	// public DNS; see OpaqueID.
 	Namespace string
-	// Name is the StaticSite's name.
+	// Name is the StaticSite's name. The same caveat applies.
 	Name string
-	// UID is the StaticSite's UID, for a template that wants a globally unique
-	// component. Note that it changes if the resource is deleted and recreated, so
-	// a template using it gets a new bucket in that case.
+	// UID is the StaticSite's UID. It is already opaque, but it changes if the
+	// resource is deleted and recreated, so a template using it cannot be computed
+	// before the resource exists.
 	UID string
 }
 
@@ -60,12 +75,39 @@ var reservedBucketNamePrefixes = []string{"xn--", "sthree-", "sthree-configurato
 // reservedBucketNameSuffixes are suffixes S3 keeps for itself.
 var reservedBucketNameSuffixes = []string{"-s3alias", "--ol-s3", "--x-s3", "--table-s3"}
 
+// OpaqueSiteID returns the version 5 UUID identifying a site.
+//
+// Version 5 is the standard construction for a deterministic UUID derived from a
+// name inside a namespace (RFC 9562, formerly RFC 4122), which is exactly this
+// case: the name is "<namespace>/<name>" and the namespace is the cluster's own
+// UUID. Using a per-cluster namespace is what makes the result unguessable --
+// Kubernetes namespaces and resource names are short and predictable, so an
+// unsalted digest of them could simply be enumerated.
+//
+// It is reproducible outside the cluster with standard tools, which is the point:
+//
+//	uuidgen --sha1 --namespace "$CLUSTER_UUID" --name "web/docs"
+func (d *Defaults) OpaqueSiteID(namespace, name string) (uuid.UUID, error) {
+	if d.BucketNameUUIDNamespace == "" {
+		return uuid.Nil, fmt.Errorf(
+			"no bucket name UUID namespace is configured; the operator normally reads it from the " +
+				"cluster, or set --bucket-name-uuid-namespace")
+	}
+
+	clusterNamespace, err := uuid.Parse(d.BucketNameUUIDNamespace)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("--bucket-name-uuid-namespace %q is not a UUID: %w",
+			d.BucketNameUUIDNamespace, err)
+	}
+
+	return uuid.NewSHA1(clusterNamespace, []byte(namespace+"/"+name)), nil
+}
+
 // GenerateBucketName derives a bucket name for a site that does not name one.
 //
 // The result is documented and reproducible on purpose: someone who would rather
 // create the bucket themselves, or write an IAM policy scoped to it, needs to be
-// able to work out the name without asking the cluster. With the default template
-// it is simply "<namespace>-<name>", sanitised.
+// able to work out the name without asking the cluster.
 func (d *Defaults) GenerateBucketName(site *webv1alpha1.StaticSite) (string, error) {
 	templateText := d.BucketNameTemplate
 	if templateText == "" {
@@ -77,12 +119,25 @@ func (d *Defaults) GenerateBucketName(site *webv1alpha1.StaticSite) (string, err
 		return "", fmt.Errorf("parse bucket name template: %w", err)
 	}
 
-	var rendered strings.Builder
-	err = parsed.Execute(&rendered, BucketNameData{
+	data := BucketNameData{
 		Namespace: site.Namespace,
 		Name:      site.Name,
 		UID:       string(site.UID),
-	})
+	}
+
+	// The opaque identifier needs the cluster's UUID namespace, which a template
+	// that does not use it should not have to have configured.
+	if templateUsesOpaqueID(templateText) {
+		opaque, err := d.OpaqueSiteID(site.Namespace, site.Name)
+		if err != nil {
+			return "", err
+		}
+		data.OpaqueID = opaque.String()
+		data.ShortID = strings.ReplaceAll(opaque.String(), "-", "")[:12]
+	}
+
+	var rendered strings.Builder
+	err = parsed.Execute(&rendered, data)
 	if err != nil {
 		return "", fmt.Errorf("render bucket name template: %w", err)
 	}
@@ -170,6 +225,13 @@ func hasReservedSuffix(name string) bool {
 // hasReservedAffix reports whether either end of the name is reserved by S3.
 func hasReservedAffix(name string) bool {
 	return hasReservedPrefix(name) || hasReservedSuffix(name)
+}
+
+// templateUsesOpaqueID reports whether a template refers to the derived
+// identifier, so that a cluster whose template does not need one is not forced to
+// configure a UUID namespace.
+func templateUsesOpaqueID(templateText string) bool {
+	return strings.Contains(templateText, ".OpaqueID") || strings.Contains(templateText, ".ShortID")
 }
 
 func shortDigest(value string) string {

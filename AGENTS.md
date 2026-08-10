@@ -59,6 +59,32 @@ bearing.
 - **`patchStatus` skips a no-op write.** An unconditional status write produces an
   update event, which reconciles again, which writes status again.
 
+### Generated bucket names must stay opaque
+
+A bucket name is part of the website hostname, so it appears in every CNAME record
+pointing at a site. That makes it public. The default name is therefore a version 5
+UUID of `<namespace>/<name>` derived under a per-cluster UUID namespace, rendered as
+`static-s3-<uuid>` -- never the Kubernetes namespace and resource name, which would
+publish an inventory of the cluster.
+
+Three properties have to hold together, and it is easy to break one while fixing
+another:
+
+- **Opaque.** No namespace or resource name in the output.
+- **Unguessable.** The per-cluster UUID namespace is a salt. Without it, a digest of
+  two short predictable strings could simply be enumerated, so dropping it would
+  leave the name unreadable but not private.
+- **Reproducible offline.** Someone has to be able to compute the name to
+  pre-create a bucket or scope an IAM policy. That is why it is standard UUIDv5
+  rather than a bespoke hash, and why
+  `TestGenerateBucketNameMatchesTheDocumentedCommand` pins an exact value derived
+  independently with `uuidgen` and Python. If that test fails,
+  docs/configuration.md is lying and has to change with it.
+
+`{{ .Namespace }}` and `{{ .Name }}` remain available in the template for a cluster
+that deliberately wants readable names; both are marked in the docs as reaching
+public DNS.
+
 ### Bucket ownership is the safety property
 
 `spec.bucket.deletionPolicy` defaults to `Delete`, so deleting a `StaticSite`
@@ -137,6 +163,16 @@ Everything else specific to this project lives in files the plugin does not
 generate — `templates/_operator.tpl`, `templates/operator/credentials.yaml`,
 `values.schema.json` — and the `operator:` block in `values.yaml`, which is worth
 checking survived. `make helm-chart` prints this reminder.
+
+**The chart carries copies of generated output**, and it falling behind the operator
+has already broken an install twice: once a CRD still requiring a field the API had
+made optional, once a manager role missing a permission the operator had started
+needing. Both times the operator was right and the chart was wrong.
+
+`hack/tools/helmsync` copies the CRDs and the manager role's rules into the chart on
+every `make manifests`, and `--check` makes it a drift check in `verify-generated`.
+**If you add anything else the plugin generates from the code, add it there too** —
+the failure mode is silent, and only shows up when somebody installs the chart.
 
 ### Adding a setting
 

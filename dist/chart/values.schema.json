@@ -35,7 +35,12 @@
             "bucketNameTemplate": {
               "type": "string",
               "minLength": 1,
-              "description": "Go template generating a bucket name for a StaticSite that omits spec.bucket.name, rendered with {{ .Namespace }}, {{ .Name }} and {{ .UID }}. Bucket names are global per provider, so add a prefix of your own if the provider is shared."
+              "description": "Go template generating a bucket name for a StaticSite that omits spec.bucket.name, rendered with {{ .OpaqueID }}, {{ .ShortID }}, {{ .Namespace }}, {{ .Name }} and {{ .UID }}. A bucket name reaches public DNS, so prefer the opaque identifier over the namespace and name."
+            },
+            "bucketNameUUIDNamespace": {
+              "type": "string",
+              "pattern": "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "description": "UUID namespace that {{ .OpaqueID }} is derived under, which is what makes a generated bucket name unguessable. Empty reads the kube-system namespace UID, which is stable per cluster; set it explicitly to keep names stable across clusters, or when rbac.namespaced is true."
             },
             "region": {
               "type": "string",

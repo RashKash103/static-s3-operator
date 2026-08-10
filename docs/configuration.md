@@ -12,6 +12,8 @@ chooses it once, and a site inherits it.
   - [spec.source](#specsource)
   - [spec.bucket](#specbucket)
     - [How a bucket name is generated](#how-a-bucket-name-is-generated)
+      - [The cluster UUID](#the-cluster-uuid)
+      - [Computing the name yourself](#computing-the-name-yourself)
     - [Where the website URL comes from](#where-the-website-url-comes-from)
   - [spec.sync](#specsync)
   - [spec.service](#specservice)
@@ -100,58 +102,99 @@ own credentials, and should also set `sync.acl: private`.
 #### How a bucket name is generated
 
 Leaving `spec.bucket.name` out is the normal case. The operator derives the name
-from the resource, and the format is fixed and documented so that you can work it
-out yourself — to create the bucket by hand, to scope an IAM policy to it, or to
-find it in a provider's console.
+from the resource, and the derivation is deliberately **opaque**: a bucket name is
+part of the website hostname, so it appears in every CNAME record pointing at the
+site. A name like `web-docs` would publish the fact that your cluster has a `web`
+namespace containing `docs` — an inventory of the cluster, readable by anyone who
+looks up the DNS.
 
-**With the default settings, the name is `<namespace>-<name>`.** A `StaticSite`
-called `docs` in namespace `web` publishes to `web-docs`.
+**The name is `static-s3-<uuid>`**, where the UUID is a
+[version 5 UUID](https://www.rfc-editor.org/rfc/rfc9562#name-uuid-version-5) —
+the standard construction for a deterministic UUID derived from a name inside a
+namespace:
 
-The full rule is a Go template, `operator.defaults.bucketNameTemplate`, rendered
-with:
-
-| Field | Value |
+| Part | Value |
 | --- | --- |
-| `{{ .Namespace }}` | the `StaticSite`'s namespace |
-| `{{ .Name }}` | the `StaticSite`'s name |
-| `{{ .UID }}` | the `StaticSite`'s UID |
+| UUID namespace | the cluster's UUID (see below) |
+| name | `<kubernetes namespace>/<kubernetes name>` |
 
-The rendered string is then made into a legal bucket name, deterministically:
+So a `StaticSite` called `docs` in namespace `web` publishes to something like
+`static-s3-f1acd0bd-d4a1-5773-b2b7-19b67ff61a44`. It is stable, it is the same
+every time, and it says nothing about the cluster.
 
-1. Lowercased, and surrounding whitespace removed.
-2. Every character outside `a-z`, `0-9` and `-` is replaced with `-`. Dots are
-   included in that, even though S3 allows them, because a bucket name containing a
-   dot cannot be reached at `bucket.endpoint` over HTTPS — the wildcard certificate
-   does not cover the extra label. A `StaticSite` name may contain dots, so this
-   does come up.
-3. Runs of `-` are collapsed to one, and leading and trailing `-` are removed.
-4. If the result is longer than 63 characters, it is cut to 54 and given `-` plus
-   the first 8 hex characters of the SHA-256 of the rendered string. Two names that
-   differ only past the cut therefore still get different buckets.
-5. If the result looks like an IP address or starts with a prefix S3 reserves
-   (`xn--`, `sthree-`, …), `site-` is prepended. If it ends with a reserved suffix
-   (`-s3alias`, `--ol-s3`, …), `-site` is appended.
-6. If it is shorter than 3 characters, `-` plus the same 8-character digest is
-   appended.
+##### The cluster UUID
 
-Reproducing it in a shell, for the default template:
+The UUID namespace is what makes the name *unguessable* rather than merely
+unreadable. Kubernetes namespaces and resource names are short and predictable, so
+an unsalted digest of `web/docs` could simply be enumerated by anyone who suspected
+that name. Deriving under a value unique to your cluster removes that.
+
+By default the operator uses the UID of the `kube-system` namespace: unique to the
+cluster, stable for its lifetime, generated at bootstrap, and published nowhere.
+Nothing has to be created or stored. Read it with:
 
 ```sh
-namespace=web
-name=docs
-
-full="${namespace}-${name}"
-bucket="$(printf '%s' "$full" \
-  | tr '[:upper:]' '[:lower:]' \
-  | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-//; s/-$//')"
-
-if [ "${#bucket}" -gt 63 ]; then
-  digest="$(printf '%s' "$full" | sha256sum | cut -c1-8)"
-  bucket="$(printf '%s' "${bucket:0:54}" | sed -E 's/-$//')-${digest}"
-fi
-
-echo "$bucket"     # web-docs
+kubectl get namespace kube-system -o jsonpath='{.metadata.uid}'
 ```
+
+Set `operator.defaults.bucketNameUUIDNamespace` to any UUID to override it. Two
+reasons you might:
+
+- **Stability across clusters.** The default ties names to one cluster. If sites
+  are ever rebuilt into a fresh cluster and have to find their existing buckets,
+  pin the value so the names come out the same.
+- **`rbac.namespaced: true`.** Reading `kube-system` needs `get` on namespaces,
+  which is cluster-scoped and not granted in namespaced mode, so the operator will
+  refuse to start until you set this.
+
+##### Computing the name yourself
+
+This is the point of a deterministic name: you can work it out before the resource
+exists, to create the bucket by hand or scope an access policy to it.
+
+From this repository:
+
+```sh
+make bucket-name NAMESPACE=web NAME=docs
+```
+
+That reads the cluster UUID from your current kubeconfig context. Pass
+`CLUSTER_UUID=…` to compute it offline, and `BUCKET_NAME_TEMPLATE=…` if your
+cluster does not use the default template.
+
+With standard tools, no repository needed — `uuidgen` from util-linux 2.38 or
+newer:
+
+```sh
+CLUSTER_UUID=$(kubectl get namespace kube-system -o jsonpath='{.metadata.uid}')
+
+echo "static-s3-$(uuidgen --sha1 --namespace "$CLUSTER_UUID" --name 'web/docs')"
+```
+
+Or with Python, which is more portable and gives the same answer:
+
+```sh
+CLUSTER_UUID=$(kubectl get namespace kube-system -o jsonpath='{.metadata.uid}')
+
+python3 -c 'import uuid, sys; print("static-s3-" + str(uuid.uuid5(uuid.UUID(sys.argv[1]), sys.argv[2])))' \
+  "$CLUSTER_UUID" "web/docs"
+```
+
+Both take the name as `<namespace>/<name>` with a slash, which is exactly what the
+operator hashes. Any UUID library will do the same: this is `uuid.uuid5` in Python,
+`uuid.NewSHA1` in Go, `uuidv5` in Node's `uuid` package.
+
+Then pre-create the bucket, if that is what you are doing:
+
+```sh
+BUCKET=$(make -s bucket-name NAMESPACE=web NAME=docs 2>/dev/null)
+aws s3api create-bucket --bucket "$BUCKET" --region eu-west-1 \
+  --create-bucket-configuration LocationConstraint=eu-west-1
+```
+
+The operator adopts a bucket it finds rather than creating it — and because it did
+not create it, it will never delete it. That is a feature if you are managing
+buckets yourself; see [ownership](architecture.md#bucket-ownership).
 
 Or just ask the cluster after the fact:
 
@@ -159,19 +202,38 @@ Or just ask the cluster after the fact:
 kubectl get staticsite docs -n web -o jsonpath='{.status.bucketName}'
 ```
 
-Two things worth knowing:
+##### Sanitisation, and the other template fields
 
-- **Bucket names are global per provider.** `web-docs` is a name somebody else may
-  well have taken. If the provider is shared, give the template a prefix of your
-  own: `bucketNameTemplate: "acme-{{ .Namespace }}-{{ .Name }}"`.
-- **The name is sticky.** Whatever a site resolves to is recorded in
-  `status.bucketName` and reused from then on, so changing the cluster's template
-  later does not move existing sites onto new buckets and orphan the old ones. It
-  only affects sites created afterwards.
+Whatever the template renders is made into a legal bucket name, deterministically:
+lowercased; every character outside `a-z`, `0-9` and `-` replaced with `-`; runs of
+`-` collapsed; leading and trailing `-` trimmed; truncated to 54 characters plus a
+short digest if it exceeds 63; padded if shorter than 3; and prefixed or suffixed
+with `site` if it comes out looking like an IP address or using an affix S3
+reserves. The default template needs none of that — `static-s3-<uuid>` is 46
+characters of already-legal name — but a custom one might.
+
+The template can also use:
+
+| Field | Value |
+| --- | --- |
+| `{{ .OpaqueID }}` | the version 5 UUID, as above |
+| `{{ .ShortID }}` | its first 12 hex digits, for when a long prefix leaves no room |
+| `{{ .Namespace }}` | the `StaticSite`'s namespace — **goes into public DNS** |
+| `{{ .Name }}` | the `StaticSite`'s name — **goes into public DNS** |
+| `{{ .UID }}` | the `StaticSite`'s UID, already opaque but not knowable in advance |
+
+Bucket names are global per provider, so add a prefix of your own if the provider
+is shared: `acme-{{ .OpaqueID }}`. To go back to readable names, knowing what that
+publishes, use `{{ .Namespace }}-{{ .Name }}` — no cluster UUID is needed then.
+
+**The name is sticky.** Whatever a site resolves to is recorded in
+`status.bucketName` and reused from then on, so changing the template or the
+cluster UUID later does not move existing sites onto new buckets and orphan the old
+ones. It only affects sites created afterwards.
 
 Adding `spec.bucket.name` to a site that already publishes to a generated bucket is
-refused, with the name it is using, rather than silently orphaning that bucket. To
-publish to a different bucket, create a new `StaticSite`.
+refused, naming the bucket in use, rather than silently orphaning it. To publish to
+a different bucket, create a new `StaticSite`.
 
 #### Where the website URL comes from
 
@@ -328,7 +390,8 @@ Fill in the `StaticSite` fields a site leaves unset.
 | --- | --- | --- |
 | `sourcePath` | `/usr/share/nginx/html` | `spec.source.path` |
 | `pullInterval` | `24h` | `spec.source.pullInterval` |
-| `bucketNameTemplate` | `{{ .Namespace }}-{{ .Name }}` | `spec.bucket.name`; see [above](#how-a-bucket-name-is-generated) |
+| `bucketNameTemplate` | `static-s3-{{ .OpaqueID }}` | `spec.bucket.name`; see [above](#how-a-bucket-name-is-generated) |
+| `bucketNameUUIDNamespace` | empty (the `kube-system` UID) | the UUID namespace `{{ .OpaqueID }}` is derived under |
 | `region` | `us-east-1` | `spec.bucket.region` |
 | `endpoint` | `""` (AWS) | `spec.bucket.endpoint` |
 | `forcePathStyle` | `false` | `spec.bucket.forcePathStyle` |
@@ -395,6 +458,7 @@ The chart renders these; they are listed for a hand-written Deployment or for
 --default-source-path
 --default-pull-interval
 --default-bucket-name-template
+--bucket-name-uuid-namespace
 --default-region
 --default-endpoint
 --default-force-path-style

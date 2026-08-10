@@ -34,9 +34,10 @@ spec:
     image: ghcr.io/acme/docs:latest
 ```
 
-That is a complete resource. The bucket is named `web-docs`, after the namespace
-and the resource; everything else has a default, and the defaults are set once for
-the cluster in the Helm chart.
+That is a complete resource. The bucket gets an opaque, deterministic name derived
+from the resource — so it does not publish your namespace and resource names in
+public DNS — and everything else has a default, set once for the cluster in the Helm
+chart.
 
 ## Contents
 
@@ -80,31 +81,60 @@ the cluster in the Helm chart.
 
 ## Bucket names
 
-Leave `spec.bucket.name` out and the operator derives it from the resource. With
-the default settings that is **`<namespace>-<name>`**: a `StaticSite` called `docs`
-in namespace `web` publishes to `web-docs`.
+Leave `spec.bucket.name` out and the operator derives it from the resource. The
+derived name is **opaque on purpose**: a bucket name is part of the website
+hostname, so it shows up in every CNAME record pointing at the site. A name like
+`web-docs` would publish the fact that your cluster has a `web` namespace
+containing `docs`.
 
-The format is fixed and [documented in
-full](docs/configuration.md#how-a-bucket-name-is-generated), so you can work out
-the name yourself — to create the bucket by hand, to scope an IAM policy to it, or
-to find it in a console. Or ask the cluster:
+Instead the name is `static-s3-<uuid>`, where the UUID is a
+[version 5 UUID](https://www.rfc-editor.org/rfc/rfc9562#name-uuid-version-5) of
+`<namespace>/<name>` derived under a UUID namespace unique to your cluster:
+
+```
+static-s3-f1acd0bd-d4a1-5773-b2b7-19b67ff61a44
+```
+
+The per-cluster component matters. Namespaces and resource names are short and
+guessable, so an unsalted hash of `web/docs` could just be enumerated; salting with
+something only your cluster has removes that. By default it is the UID of the
+`kube-system` namespace — unique, stable for the cluster's life, and published
+nowhere.
+
+It is still fully deterministic, so you can compute a name before the bucket
+exists, to create it by hand or scope an IAM policy to it:
+
+```sh
+make bucket-name NAMESPACE=web NAME=docs
+# static-s3-f1acd0bd-d4a1-5773-b2b7-19b67ff61a44
+```
+
+Or with standard tools, no repository needed:
+
+```sh
+CLUSTER_UUID=$(kubectl get namespace kube-system -o jsonpath='{.metadata.uid}')
+echo "static-s3-$(uuidgen --sha1 --namespace "$CLUSTER_UUID" --name 'web/docs')"
+```
+
+Or ask the cluster after the fact:
 
 ```sh
 kubectl get staticsite docs -n web -o jsonpath='{.status.bucketName}'
 ```
 
-Bucket names are global per provider, so if yours is shared with anything else,
-give the template a prefix of your own at install time:
+Bucket names are global per provider, so if yours is shared, give the template a
+prefix of your own at install time:
 
 ```sh
---set 'operator.defaults.bucketNameTemplate=acme-{{ .Namespace }}-{{ .Name }}'
+--set 'operator.defaults.bucketNameTemplate=acme-{{ .OpaqueID }}'
 ```
 
-Set `spec.bucket.name` explicitly when a site needs a particular bucket — a name
-you already own, or one that has to match a hostname. Either way the name is fixed
-for the life of the resource: it is recorded in `status.bucketName` and reused, so
+Set `spec.bucket.name` explicitly when a site needs a particular bucket — one you
+already own, or one that has to match a hostname. Either way the name is fixed for
+the life of the resource: it is recorded in `status.bucketName` and reused, so
 changing the cluster's template later never moves an existing site onto a new
-bucket.
+bucket. Full details, including how to keep names stable across clusters, are in
+[the configuration reference](docs/configuration.md#how-a-bucket-name-is-generated).
 
 ## Requirements
 

@@ -24,7 +24,7 @@
         "s3:PutBucketPublicAccessBlock",
         "s3:DeleteBucketPublicAccessBlock"
       ],
-      "Resource": "arn:aws:s3:::SITE-PREFIX-*"
+      "Resource": "arn:aws:s3:::static-s3-*"
     },
     {
       "Sid": "ManageSiteObjects",
@@ -38,7 +38,7 @@
         "s3:AbortMultipartUpload",
         "s3:ListMultipartUploadParts"
       ],
-      "Resource": "arn:aws:s3:::SITE-PREFIX-*/*"
+      "Resource": "arn:aws:s3:::static-s3-*/*"
     }
   ]
 }

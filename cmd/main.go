@@ -199,12 +199,19 @@ func main() {
 		setupLog.Error(err, "Failed to determine the syncer image")
 		os.Exit(1)
 	}
+	// Opaque bucket names are derived under a per-cluster UUID namespace, which is
+	// read from the cluster unless one was given.
+	if err := defaults.ResolveBucketNameUUIDNamespace(context.Background(), mgr.GetAPIReader()); err != nil {
+		setupLog.Error(err, "Failed to determine the bucket name UUID namespace")
+		os.Exit(1)
+	}
 	if err := defaults.Validate(); err != nil {
 		setupLog.Error(err, "Invalid operator configuration")
 		os.Exit(1)
 	}
 	setupLog.Info("Resolved operator configuration",
 		"syncerImage", defaults.SyncerImage,
+		"bucketNameTemplate", defaults.BucketNameTemplate,
 		"defaultRegion", defaults.Region,
 		"defaultEndpoint", defaults.Endpoint,
 		"defaultSourcePath", defaults.SourcePath,

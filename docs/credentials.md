@@ -37,8 +37,8 @@ written into a Job's command line or environment in plain text.
 ## The access policy
 
 [`docs/policies/operator-policy.json`](policies/operator-policy.json) is the full
-policy. Replace `SITE-PREFIX-` with a prefix your site buckets share, so the key
-cannot touch anything else in the account:
+policy. It is scoped to `static-s3-*`, which is the prefix every generated bucket
+name carries by default, so the key cannot touch anything else in the account:
 
 ```json
 {
@@ -67,7 +67,7 @@ cannot touch anything else in the account:
         "s3:PutBucketPublicAccessBlock",
         "s3:DeleteBucketPublicAccessBlock"
       ],
-      "Resource": "arn:aws:s3:::SITE-PREFIX-*"
+      "Resource": "arn:aws:s3:::static-s3-*"
     },
     {
       "Sid": "ManageSiteObjects",
@@ -81,7 +81,7 @@ cannot touch anything else in the account:
         "s3:AbortMultipartUpload",
         "s3:ListMultipartUploadParts"
       ],
-      "Resource": "arn:aws:s3:::SITE-PREFIX-*/*"
+      "Resource": "arn:aws:s3:::static-s3-*/*"
     }
   ]
 }
@@ -95,13 +95,17 @@ matters.
 For the prefix to cover every site, it has to match how buckets get named. Sites
 that leave `spec.bucket.name` out are named by
 [`operator.defaults.bucketNameTemplate`](configuration.md#how-a-bucket-name-is-generated),
-so give the template the same prefix as the policy:
+which defaults to `static-s3-{{ .OpaqueID }}` — so the default prefix is
+`static-s3-`, and `arn:aws:s3:::static-s3-*` covers every generated bucket without
+any further configuration.
+
+To use a prefix of your own, change both together:
 
 ```yaml
 operator:
   defaults:
     # Matches "arn:aws:s3:::my-sites-*" in the policy above.
-    bucketNameTemplate: "my-sites-{{ .Namespace }}-{{ .Name }}"
+    bucketNameTemplate: "my-sites-{{ .OpaqueID }}"
 ```
 
 Then a site that names its own bucket outside that prefix fails loudly at
@@ -177,19 +181,23 @@ Then every `StaticSite` outside the operator's namespace must set
 Create a user with only this policy, then take a key for it:
 
 ```sh
-BUCKET_PREFIX=my-sites
-
-# The policy, with the prefix filled in.
-sed "s/SITE-PREFIX-/${BUCKET_PREFIX}-/" docs/policies/operator-policy.json > /tmp/policy.json
-
 aws iam create-user --user-name static-s3-operator
 
+# The policy is already scoped to static-s3-*, the default bucket name prefix.
 aws iam put-user-policy \
   --user-name static-s3-operator \
   --policy-name static-s3-operator \
-  --policy-document file:///tmp/policy.json
+  --policy-document file://docs/policies/operator-policy.json
 
 aws iam create-access-key --user-name static-s3-operator
+```
+
+If you set a prefix of your own, substitute it into the policy first, and set the
+matching `bucketNameTemplate`:
+
+```sh
+BUCKET_PREFIX=my-sites
+sed "s/static-s3-/${BUCKET_PREFIX}-/" docs/policies/operator-policy.json > /tmp/policy.json
 ```
 
 The last command prints the only copy of the secret access key. Put it straight

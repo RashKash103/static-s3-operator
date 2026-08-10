@@ -1,16 +1,36 @@
 # Letting the operator name the bucket, and choosing the name yourself.
 #
 # spec.bucket.name is optional. Left out, the operator derives it from the
-# resource: with the default template that is "<namespace>-<name>". The rule is
-# documented in docs/configuration.md, so the name is something you can work out
-# rather than something you have to discover.
+# resource -- and derives it opaquely, because a bucket name is part of the website
+# hostname and so appears in every CNAME record pointing at the site. A readable
+# name would publish which namespaces and resources this cluster has.
+#
+# The derived name is "static-s3-<uuid>", where the UUID is a version 5 UUID
+# (RFC 9562) of "<namespace>/<name>" under a UUID namespace unique to the cluster:
+#
+#   static-s3-f1acd0bd-d4a1-5773-b2b7-19b67ff61a44
+#
+# It is still fully deterministic, so it can be computed before the bucket exists,
+# which is what lets you create the bucket by hand or scope an IAM policy to it:
+#
+#   make bucket-name NAMESPACE=web NAME=docs
+#
+#   CLUSTER_UUID=$(kubectl get namespace kube-system -o jsonpath='{.metadata.uid}')
+#   echo "static-s3-$(uuidgen --sha1 --namespace "$CLUSTER_UUID" --name 'web/docs')"
+#
+# Or read it back afterwards:
+#
+#   kubectl get staticsite docs -n web -o jsonpath='{.status.bucketName}'
 #
 # Whichever way the name is decided, it is fixed for the life of the resource. It
 # is recorded in status.bucketName and reused from there, so changing the cluster's
 # template later does not move an existing site onto a new bucket.
+#
+# See docs/configuration.md for the full rule, including how to keep names stable
+# across clusters.
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
 
-# Derived: this publishes to "web-docs".
+# Derived and opaque: "static-s3-<uuid of web/docs>".
 apiVersion: web.rka.sh/v1alpha1
 kind: StaticSite
 metadata:
@@ -20,9 +40,8 @@ spec:
   source:
     image: ghcr.io/acme/docs:latest
 ---
-# Also derived, and worth noting: the resource name may contain dots, which are
-# replaced with hyphens because a bucket name containing a dot cannot be reached at
-# bucket.endpoint over HTTPS. This publishes to "web-marketing-acme-example-com".
+# Also derived. Note that nothing about this resource -- not the namespace, not the
+# dots in the name -- reaches the bucket name, and so nothing reaches public DNS.
 apiVersion: web.rka.sh/v1alpha1
 kind: StaticSite
 metadata:
@@ -33,8 +52,9 @@ spec:
     image: ghcr.io/acme/marketing:latest
 ---
 # Chosen explicitly, for a bucket that already exists or whose name has to match a
-# hostname. An explicit name is immutable: to publish elsewhere, create a new
-# StaticSite.
+# hostname. Bear in mind that an explicit name does end up in public DNS, so pick
+# one you are happy to publish. An explicit name is immutable: to publish
+# elsewhere, create a new StaticSite.
 apiVersion: web.rka.sh/v1alpha1
 kind: StaticSite
 metadata:

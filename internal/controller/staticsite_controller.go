@@ -78,6 +78,9 @@ type StaticSiteReconciler struct {
 // +kubebuilder:rbac:groups=web.rka.sh,resources=staticsites/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// The operator reads the kube-system namespace once at startup, for the UID that
+// opaque bucket names are derived under. See config.ResolveBucketNameUUIDNamespace.
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch

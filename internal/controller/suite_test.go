@@ -180,6 +180,9 @@ func testDefaults() *config.Defaults {
 	settings.Namespace = operatorNamespace
 	settings.CredentialsSecret = defaultCredentialsSecret
 	settings.SyncerImage = "ghcr.io/rashkash103/static-s3-operator:test"
+	// Generated bucket names are derived under a per-cluster UUID namespace, which
+	// the operator normally reads from kube-system.
+	settings.BucketNameUUIDNamespace = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
 	settings.SourcePath = "/usr/share/nginx/html"
 	settings.Region = "us-east-1"
 	settings.SyncRetryBaseDelay = time.Second

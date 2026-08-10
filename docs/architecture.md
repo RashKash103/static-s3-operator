@@ -139,6 +139,15 @@ A site that names no bucket gets one derived from its namespace and name, throug
 the name can be worked out rather than discovered, which is what makes it possible
 to pre-create the bucket or scope a policy to it.
 
+The derivation is a version 5 UUID of `<namespace>/<name>` under a UUID namespace
+unique to the cluster, rendered as `static-s3-<uuid>`. Two properties are being
+balanced. It must not be readable, because a bucket name is part of the website
+hostname and therefore appears in public DNS — a readable name would publish which
+namespaces and resources the cluster has. And it must not be *guessable* either,
+which a bare digest of two short predictable strings would be, so the per-cluster
+UUID namespace acts as a salt. What is left is deterministic, so it stays
+computable offline.
+
 Resolution is sticky, and the order is:
 
 1. `spec.bucket.name`, if set. The CRD makes it immutable.

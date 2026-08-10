@@ -144,20 +144,56 @@ operator:
 
     ## Bucket name for a StaticSite that omits spec.bucket.name.
     ##
-    ## A Go template rendered with {{ .Namespace }}, {{ .Name }} and {{ .UID }} of
-    ## the StaticSite, then lowercased with anything S3 disallows replaced by a
-    ## hyphen. A result longer than 63 characters is truncated and given a short
-    ## digest of the full name.
+    ## A bucket name reaches the public internet: it is part of the website
+    ## hostname, so it appears in any CNAME record pointing at the site. The
+    ## default therefore carries no Kubernetes namespace or resource name, because
+    ## that would publish an inventory of the cluster to anyone reading DNS.
+    ##
+    ## A Go template rendered with:
+    ##
+    ##   {{ .OpaqueID }}   a version 5 UUID derived from "<namespace>/<name>"
+    ##                     under the cluster's UUID namespace (see below)
+    ##   {{ .ShortID }}    the first 12 hex digits of OpaqueID, when a long
+    ##                     prefix leaves no room for the full UUID
+    ##   {{ .Namespace }}  the StaticSite's namespace -- goes into public DNS
+    ##   {{ .Name }}       the StaticSite's name -- goes into public DNS
+    ##   {{ .UID }}        the StaticSite's UID
+    ##
+    ## The result is lowercased with anything S3 disallows replaced by a hyphen,
+    ## and truncated with a short digest if it exceeds 63 characters.
     ##
     ## Bucket names are global per provider, so add a prefix of your own if the
     ## provider is shared with anything else:
     ##
-    ##   bucketNameTemplate: "acme-{{ .Namespace }}-{{ .Name }}"
+    ##   bucketNameTemplate: "acme-{{ .OpaqueID }}"
+    ##
+    ## The generated name is reproducible outside the cluster, so a bucket can be
+    ## created by hand or an access policy scoped to it before the resource
+    ## exists. See docs/configuration.md for the command.
     ##
     ## Changing this later does not move existing sites: each one records the name
     ## it resolved in status.bucketName and keeps using it.
     ##
-    bucketNameTemplate: "{{ .Namespace }}-{{ .Name }}"
+    bucketNameTemplate: "static-s3-{{ .OpaqueID }}"
+
+    ## The UUID namespace that {{ .OpaqueID }} is derived under.
+    ##
+    ## This is what makes a generated name unguessable rather than merely
+    ## unreadable: Kubernetes namespaces and resource names are short and
+    ## predictable, so an unsalted digest of them could simply be enumerated.
+    ##
+    ## Left empty, the operator reads the UID of the kube-system namespace, which
+    ## is unique to the cluster, stable for its lifetime, and published nowhere.
+    ## That needs "get" on namespaces, which the chart's ClusterRole grants; with
+    ## rbac.namespaced=true it is not available, so set this explicitly.
+    ##
+    ## Set it explicitly to keep names stable across clusters, which matters if
+    ## sites are ever rebuilt into a new cluster and have to find their existing
+    ## buckets. Any UUID will do:
+    ##
+    ##   bucketNameUUIDNamespace: "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    ##
+    bucketNameUUIDNamespace: ""
 
     ## S3 region, used when a StaticSite omits spec.bucket.region.
     ##

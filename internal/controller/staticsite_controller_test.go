@@ -257,17 +257,25 @@ var _ = Describe("StaticSite Controller", func() {
 			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
 		})
 
-		It("derives the bucket name from the namespace and name when none is given", func() {
-			// The documented default: <namespace>-<name>, so somebody can create the
-			// bucket by hand or scope a policy to it without asking the cluster.
+		It("derives an opaque bucket name when none is given", func() {
+			// The name goes into public DNS, so it must not spell out the namespace or
+			// the resource name -- while still being computable in advance, so a bucket
+			// can be created by hand or a policy scoped to it.
 			site := newSite()
 			site.Spec.Bucket.Name = ""
 			create(site)
 
-			expected := namespace + "-" + siteName
+			opaque, err := defaults.OpaqueSiteID(namespace, siteName)
+			Expect(err).NotTo(HaveOccurred())
+			expected := "static-s3-" + opaque.String()
+
 			Eventually(func() string {
 				return fetch().Status.BucketName
 			}, eventuallyTimeout, eventuallyPoll).Should(Equal(expected))
+
+			By("not leaking the namespace or the name")
+			Expect(expected).NotTo(ContainSubstring(namespace))
+			Expect(expected).NotTo(ContainSubstring(siteName))
 
 			Eventually(func() bool {
 				return fakeS3.exists(expected)
@@ -275,8 +283,8 @@ var _ = Describe("StaticSite Controller", func() {
 				"the operator should create the bucket it derived")
 
 			By("keeping that bucket even if the cluster template changes later")
-			defaults.BucketNameTemplate = "renamed-{{.Namespace}}-{{.Name}}"
-			_, err := kubectlFreeAnnotate(fetch())
+			defaults.BucketNameTemplate = "renamed-{{.ShortID}}"
+			_, err = kubectlFreeAnnotate(fetch())
 			Expect(err).NotTo(HaveOccurred())
 
 			Consistently(func() string {

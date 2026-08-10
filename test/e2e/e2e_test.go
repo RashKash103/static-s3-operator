@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 
+	operatorconfig "github.com/rashkash103/static-s3-operator/internal/config"
 	operators3 "github.com/rashkash103/static-s3-operator/internal/s3"
 )
 
@@ -406,6 +407,97 @@ spec:
 			"a bucket the operator did not create must never be deleted")
 		Expect(bucketKeys(bucket)).To(ContainElement("pre-existing.txt"),
 			"and its contents must be intact")
+	})
+})
+
+var _ = Describe("generated bucket names", Ordered, func() {
+	// The default path, and the one that depends on the operator reading the
+	// cluster's identity at startup -- which works in a unit test and can only
+	// really be proven in a cluster.
+	const siteName = "derived-name-site"
+
+	imageRef := registryHost + "/derived-site:latest"
+	pushRef := localRegistry + "/derived-site:latest"
+
+	var expectedBucket string
+
+	BeforeAll(func() {
+		By("computing the name the way the documentation says to")
+		clusterUUID, err := kubectl("get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(clusterUUID).NotTo(BeEmpty())
+
+		defaults := operatorconfig.New()
+		defaults.BucketNameUUIDNamespace = clusterUUID
+		opaque, err := defaults.OpaqueSiteID(e2eNamespace, siteName)
+		Expect(err).NotTo(HaveOccurred())
+		expectedBucket = "static-s3-" + opaque.String()
+		_, _ = fmt.Fprintf(GinkgoWriter, "expecting bucket %s\n", expectedBucket)
+
+		By("publishing a site image")
+		image, err := buildSiteImage(sampleSite("derived"))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = pushSiteImage(pushRef, image)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("creating a StaticSite that names no bucket")
+		applyManifest(fmt.Sprintf(`
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  source:
+    image: %s
+    plainHTTP: true
+    pullInterval: "0"
+  bucket:
+    website:
+      indexDocument: index.html
+  service:
+    enabled: false
+`, siteName, e2eNamespace, imageRef))
+	})
+
+	AfterAll(func() {
+		_, _ = kubectl("delete", "staticsite", siteName, "-n", e2eNamespace,
+			"--ignore-not-found", "--wait=true", "--timeout=3m")
+	})
+
+	It("derives the name the documented command produces", func() {
+		Eventually(func(g Gomega) {
+			reported, err := siteField(siteName, "{.status.bucketName}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(reported).To(Equal(expectedBucket),
+				"the operator and the documented derivation must agree")
+		}, readyTimeout, 3*time.Second).Should(Succeed())
+	})
+
+	It("publishes into that bucket, and leaks nothing into its name", func() {
+		waitForSiteReady(siteName, readyTimeout)
+
+		Expect(bucketExists(expectedBucket)).To(BeTrue())
+		Expect(bucketKeys(expectedBucket)).To(ContainElement("index.html"))
+
+		// The reason the name is opaque at all: it ends up in public DNS.
+		Expect(expectedBucket).NotTo(ContainSubstring(e2eNamespace))
+		Expect(expectedBucket).NotTo(ContainSubstring(siteName))
+
+		body, status, _, err := httpGet(objectURL(expectedBucket, "index.html"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(200), "body: %s", body)
+		Expect(body).To(ContainSubstring("Sample site derived"))
+	})
+
+	It("deletes the derived bucket with the StaticSite", func() {
+		_, err := kubectl("delete", "staticsite", siteName, "-n", e2eNamespace,
+			"--wait=true", "--timeout=3m")
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			return bucketExists(expectedBucket)
+		}, 3*time.Minute, 3*time.Second).Should(BeFalse())
 	})
 })
 

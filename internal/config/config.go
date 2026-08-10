@@ -28,6 +28,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Built-in defaults that appear in more than one place.
@@ -43,8 +45,13 @@ type Defaults struct {
 	// PullInterval fills in spec.source.pullInterval. Zero disables polling.
 	PullInterval time.Duration
 	// BucketNameTemplate generates spec.bucket.name when a site leaves it out. It
-	// is a Go template evaluated with {{.Namespace}}, {{.Name}} and {{.UID}}.
+	// is a Go template evaluated with {{.OpaqueID}}, {{.ShortID}}, {{.Namespace}},
+	// {{.Name}} and {{.UID}}.
 	BucketNameTemplate string
+	// BucketNameUUIDNamespace is the UUID namespace {{.OpaqueID}} is derived
+	// under, which is what keeps a generated name from being guessable. Empty means
+	// read it from the cluster at startup.
+	BucketNameUUIDNamespace string
 	// Region fills in spec.bucket.region.
 	Region string
 	// Endpoint fills in spec.bucket.endpoint. Empty means AWS S3.
@@ -122,9 +129,11 @@ type Defaults struct {
 // New returns the built-in defaults, before flags are parsed.
 func New() *Defaults {
 	return &Defaults{
-		SourcePath:         "/usr/share/nginx/html",
-		PullInterval:       24 * time.Hour,
-		BucketNameTemplate: "{{.Namespace}}-{{.Name}}",
+		SourcePath:   "/usr/share/nginx/html",
+		PullInterval: 24 * time.Hour,
+		// A bucket name ends up in public DNS, so the default carries no cluster
+		// namespace or resource name. See OpaqueSiteID.
+		BucketNameTemplate: "static-s3-{{.OpaqueID}}",
 		Region:             defaultRegion,
 		IndexDocument:      defaultIndexDocument,
 		ErrorDocument:      "404.html",
@@ -155,9 +164,13 @@ func (d *Defaults) BindFlags(fs *flag.FlagSet) {
 		"How often to re-resolve a mutable image tag when a StaticSite omits spec.source.pullInterval. "+
 			"Zero disables polling.")
 	fs.StringVar(&d.BucketNameTemplate, "default-bucket-name-template", d.BucketNameTemplate,
-		"Go template generating a bucket name when a StaticSite omits spec.bucket.name, "+
-			"evaluated with {{.Namespace}}, {{.Name}} and {{.UID}}. Bucket names are global per "+
-			"provider, so give this a prefix of your own if the provider is shared.")
+		"Go template generating a bucket name when a StaticSite omits spec.bucket.name, evaluated "+
+			"with {{.OpaqueID}}, {{.ShortID}}, {{.Namespace}}, {{.Name}} and {{.UID}}. A bucket name "+
+			"reaches public DNS, so prefer the opaque identifier over the namespace and name.")
+	fs.StringVar(&d.BucketNameUUIDNamespace, "bucket-name-uuid-namespace", d.BucketNameUUIDNamespace,
+		"UUID namespace that {{.OpaqueID}} is derived under, which is what makes a generated name "+
+			"unguessable. Empty reads it from the cluster, which is stable per cluster; set it "+
+			"explicitly to keep names stable across clusters.")
 	fs.StringVar(&d.Region, "default-region", d.Region,
 		"S3 region used when a StaticSite omits spec.bucket.region.")
 	fs.StringVar(&d.Endpoint, "default-endpoint", d.Endpoint,
@@ -238,6 +251,17 @@ func (d *Defaults) Validate() error {
 		problems = append(problems, "--default-bucket-name-template must not be empty")
 	} else if _, err := template.New("bucketName").Parse(d.BucketNameTemplate); err != nil {
 		problems = append(problems, fmt.Sprintf("--default-bucket-name-template is not a valid template: %v", err))
+	}
+	if templateUsesOpaqueID(d.BucketNameTemplate) && d.BucketNameUUIDNamespace == "" {
+		problems = append(problems,
+			"--bucket-name-uuid-namespace is required by --default-bucket-name-template but could not "+
+				"be read from the cluster")
+	}
+	if d.BucketNameUUIDNamespace != "" {
+		if _, err := uuid.Parse(d.BucketNameUUIDNamespace); err != nil {
+			problems = append(problems,
+				fmt.Sprintf("--bucket-name-uuid-namespace is not a UUID: %v", err))
+		}
 	}
 	if d.IndexDocument == "" {
 		problems = append(problems, "--default-index-document must not be empty")

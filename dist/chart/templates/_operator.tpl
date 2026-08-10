@@ -28,6 +28,9 @@ default stays in effect for anything the chart leaves empty.
 {{- with $defaults.bucketNameTemplate }}
 - {{ printf "--default-bucket-name-template=%s" . | quote }}
 {{- end }}
+{{- with $defaults.bucketNameUUIDNamespace }}
+- {{ printf "--bucket-name-uuid-namespace=%s" . | quote }}
+{{- end }}
 {{- with $defaults.region }}
 - {{ printf "--default-region=%s" . | quote }}
 {{- end }}

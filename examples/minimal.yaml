@@ -5,17 +5,21 @@
 # the region, the index and error documents, and how often a moving tag is
 # re-checked.
 #
-# As written, this creates a bucket named after the resource -- "<namespace>-<name>",
-# so "web-docs" -- configures it for website hosting, makes it publicly readable,
-# and mirrors /usr/share/nginx/html out of the image into it. Deleting this resource
-# deletes that bucket.
+# As written, this creates a bucket with a derived, opaque name -- "static-s3-<uuid>",
+# deliberately carrying nothing about the namespace or resource, because a bucket
+# name reaches public DNS -- configures it for website hosting, makes it publicly
+# readable, and mirrors /usr/share/nginx/html out of the image into it. Deleting this
+# resource deletes that bucket.
 #
 # To find the bucket:
 #
 #   kubectl get staticsite docs -n web -o jsonpath='{.status.bucketName}'
 #
-# The naming rule is documented in full in docs/configuration.md, so you can also
-# work it out, or create the bucket yourself beforehand.
+# Or to work it out in advance, so you can create it yourself:
+#
+#   make bucket-name NAMESPACE=web NAME=docs
+#
+# The naming rule is documented in full in docs/configuration.md.
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
 apiVersion: web.rka.sh/v1alpha1
 kind: StaticSite
