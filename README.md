@@ -15,6 +15,18 @@
 > ([how](docs/credentials.md#the-access-policy)), and do not put it in front of
 > anything you cannot afford to lose.
 
+[![Lint](https://github.com/RashKash103/static-s3-operator/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/RashKash103/static-s3-operator/actions/workflows/lint.yml?query=branch%3Amain)
+[![Tests](https://github.com/RashKash103/static-s3-operator/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/RashKash103/static-s3-operator/actions/workflows/test.yml?query=branch%3Amain)
+[![Integration Tests](https://github.com/RashKash103/static-s3-operator/actions/workflows/test-integration.yml/badge.svg?branch=main)](https://github.com/RashKash103/static-s3-operator/actions/workflows/test-integration.yml?query=branch%3Amain)
+[![E2E Tests](https://github.com/RashKash103/static-s3-operator/actions/workflows/test-e2e.yml/badge.svg?branch=main)](https://github.com/RashKash103/static-s3-operator/actions/workflows/test-e2e.yml?query=branch%3Amain)
+[![Test Chart](https://github.com/RashKash103/static-s3-operator/actions/workflows/test-chart.yml/badge.svg?branch=main)](https://github.com/RashKash103/static-s3-operator/actions/workflows/test-chart.yml?query=branch%3Amain)
+[![Generated Files](https://github.com/RashKash103/static-s3-operator/actions/workflows/verify-generated.yml/badge.svg?branch=main)](https://github.com/RashKash103/static-s3-operator/actions/workflows/verify-generated.yml?query=branch%3Amain)
+
+[![Release](https://img.shields.io/github/v/release/RashKash103/static-s3-operator?sort=semver&label=release)](https://github.com/RashKash103/static-s3-operator/releases/latest)
+[![Helm chart](https://img.shields.io/badge/helm-oci%20%2F%20ghcr.io-0f1689?logo=helm&logoColor=white)](#install)
+[![Go](https://img.shields.io/github/go-mod/go-version/RashKash103/static-s3-operator?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/RashKash103/static-s3-operator)](LICENSE)
+
 Host a static website in an S3 bucket, with the site's contents coming from a
 directory inside a container image.
 
