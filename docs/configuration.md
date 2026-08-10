@@ -11,6 +11,7 @@ chooses it once, and a site inherits it.
 - [StaticSite](#staticsite)
   - [spec.source](#specsource)
   - [spec.bucket](#specbucket)
+    - [Where the website URL comes from](#where-the-website-url-comes-from)
   - [spec.sync](#specsync)
   - [spec.service](#specservice)
   - [spec.suspend](#specsuspend)
@@ -52,6 +53,29 @@ Where the site's files come from.
 
 Nothing in the image is executed, so any image works, including `FROM scratch`.
 
+`path` is how you point at wherever a particular image keeps its files. Its
+**contents** become the site root, so `/app/dist` publishes `/app/dist/index.html`
+as `index.html`. Common locations:
+
+| Image | `path` |
+| --- | --- |
+| nginx | `/usr/share/nginx/html` |
+| Caddy | `/usr/share/caddy` |
+| Vite, Astro, SvelteKit | `/app/dist` |
+| Create React App | `/app/build` |
+| Hugo | `/src/public` |
+| Jekyll | `/srv/jekyll/_site` |
+| `FROM scratch` | wherever you copied it |
+
+To check an image:
+
+```sh
+docker run --rm --entrypoint find ghcr.io/acme/site:latest / -name index.html
+```
+
+[`examples/image-paths.yaml`](../examples/image-paths.yaml) shows each of these,
+including two sites published from different subdirectories of one image.
+
 ### spec.bucket
 
 | Field | Type | Default | Description |
@@ -59,7 +83,7 @@ Nothing in the image is executed, so any image works, including `FROM scratch`.
 | `name` | string | **required, immutable** | Bucket name, 3–63 characters, lowercase. Global per provider. |
 | `region` | string | *operator default* (`us-east-1`) | S3 region. |
 | `endpoint` | string | *operator default* (empty = AWS) | S3 **API** endpoint for a compatible provider. Without a scheme, https is assumed. |
-| `websiteEndpointTemplate` | string | *operator default* | Go template for `status.websiteURL`, with `{{.Bucket}}`, `{{.Region}}`, `{{.Endpoint}}`. Also what the `ExternalName` Service points at. |
+| `websiteEndpointTemplate` | string | *operator default* | Go template for `status.websiteURL`, with `{{.Bucket}}`, `{{.Region}}`, `{{.Endpoint}}`. Also what the `ExternalName` Service points at. See [Where the website URL comes from](#where-the-website-url-comes-from). |
 | `forcePathStyle` | bool | *operator default* (`false`) | Address the bucket as `endpoint/bucket`. Most compatible providers need this; AWS does not. |
 | `credentials` | object | operator's own | A Secret in this namespace: `secretRef.name`, plus `accessKeyIDKey`, `secretAccessKeyKey`, `sessionTokenKey` (defaults `accessKeyID`, `secretAccessKey`, `sessionToken`). |
 | `create` | bool | `true` | Create the bucket if absent. `false` adopts a bucket managed elsewhere, which is then never deleted. |
@@ -71,6 +95,43 @@ Nothing in the image is executed, so any image works, including `FROM scratch`.
 
 A site whose bucket is not public needs something in front that reads it with its
 own credentials, and should also set `sync.acl: private`.
+
+#### Where the website URL comes from
+
+There is no S3 API that reports a bucket's website endpoint. `GetBucketWebsite`
+returns the index and error documents and nothing else, so the URL has to be
+constructed. `s3cmd ws-info` does the same thing: it renders its configured
+`website_endpoint` template, which defaults to
+`http://%(bucket)s.s3-website-%(location)s.amazonaws.com/`.
+
+`spec.bucket.websiteEndpointTemplate` is that template, per site, with the AWS
+forms built in. The operator picks, in order:
+
+1. `spec.bucket.websiteEndpointTemplate`, if set.
+2. `operator.defaults.websiteEndpointTemplate`, if set.
+3. For AWS (no endpoint): `http://<bucket>.s3-website-<region>.amazonaws.com` for
+   the regions where AWS uses the dash form, and
+   `http://<bucket>.s3-website.<region>.amazonaws.com` for the rest.
+4. For a compatible endpoint: `<scheme>://<bucket>.<host>`, or
+   `<endpoint>/<bucket>/` with `forcePathStyle`. This is a guess, and the template
+   exists because it is often wrong.
+
+To find the right value for a provider, ask s3cmd about a bucket you already have:
+
+```sh
+s3cmd ws-info s3://my-bucket
+```
+
+Then turn what it prints into a template by substituting the bucket and region:
+
+```yaml
+websiteEndpointTemplate: "http://{{ .Bucket }}.website-{{ .Region }}.example-object-store.com"
+```
+
+Because the URL is rendered from `spec.bucket.region`, that field has to match the
+bucket's real region. A mismatch produces a wrong URL, and on AWS it also makes S3
+answer requests with a redirect, so the sync fails loudly rather than silently
+publishing to the wrong place.
 
 ### spec.sync
 

@@ -1,0 +1,162 @@
+# Choosing which directory inside the image is the site.
+#
+# spec.source.path is an absolute path inside the image, and its **contents**
+# become the site root: with path /app/dist, /app/dist/index.html is uploaded as
+# index.html, not as dist/index.html.
+#
+# Omit it and the operator uses its own default, which the Helm chart sets for the
+# whole cluster:
+#
+#   helm upgrade static-s3-operator ... --set operator.defaults.sourcePath=/site
+#
+# The default out of the box is /usr/share/nginx/html. Set spec.source.path on a
+# site whose image puts the files somewhere else.
+#
+# To find out where a particular image keeps them:
+#
+#   docker run --rm --entrypoint ls ghcr.io/acme/site:latest -la /
+#   docker run --rm --entrypoint find ghcr.io/acme/site:latest / -name index.html
+#
+# Nothing in the image is ever executed, so the base image is irrelevant to the
+# operator; only the path matters.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+
+# nginx, and the operator's own default. Stating it anyway makes the manifest
+# self-explanatory and survives a change to the cluster default.
+#
+#   FROM nginx:alpine
+#   COPY public/ /usr/share/nginx/html/
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: site-nginx
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/site-nginx:latest
+    path: /usr/share/nginx/html
+  bucket:
+    name: acme-site-nginx
+---
+# A Vite, Astro or SvelteKit build, copied into an image at its build output path.
+#
+#   FROM node:22-alpine AS build
+#   WORKDIR /app
+#   COPY . .
+#   RUN npm ci && npm run build
+#
+#   FROM scratch
+#   COPY --from=build /app/dist /app/dist
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: site-vite
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/site-vite:latest
+    path: /app/dist
+  bucket:
+    name: acme-site-vite
+---
+# Create React App and Gatsby put their output in build/ and public/.
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: site-cra
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/site-cra:latest
+    path: /app/build
+  bucket:
+    name: acme-site-cra
+---
+# Hugo and Jekyll, whose Docker images conventionally build into /src/public and
+# /srv/jekyll/_site.
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: site-hugo
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/site-hugo:latest
+    path: /src/public
+  bucket:
+    name: acme-site-hugo
+---
+# Caddy's default site root.
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: site-caddy
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/site-caddy:latest
+    path: /usr/share/caddy
+  bucket:
+    name: acme-site-caddy
+---
+# A path at the image root, which is all a scratch image needs.
+#
+#   FROM scratch
+#   COPY public/ /site/
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: site-scratch
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/site-scratch:latest
+    path: /site
+  bucket:
+    name: acme-site-scratch
+---
+# One image holding several sites, published as two StaticSites from two
+# subdirectories of it.
+#
+#   FROM scratch
+#   COPY marketing/ /sites/marketing/
+#   COPY docs/      /sites/docs/
+#
+# Each site gets its own bucket and its own path; the image is built once.
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: monorepo-marketing
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/sites:latest
+    path: /sites/marketing
+  bucket:
+    name: acme-marketing
+---
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: monorepo-docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/sites:latest
+    path: /sites/docs
+  bucket:
+    name: acme-docs-from-monorepo
+---
+# The image root itself, for an image that is nothing but the site. The contents
+# of / become the bucket contents, so the image must hold only site files.
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: site-root
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/site-only:latest
+    path: /
+  bucket:
+    name: acme-site-root

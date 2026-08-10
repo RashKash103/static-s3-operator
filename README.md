@@ -146,8 +146,16 @@ Or with no base image at all, since nothing in the image is executed:
 
 ```dockerfile
 FROM scratch
-COPY public/ /usr/share/nginx/html/
+COPY public/ /site/
 ```
+
+`spec.source.path` says which directory in the image is the site — `/site` for the
+second one above. Its contents become the bucket contents, so `/site/index.html`
+is published as `index.html`. Leave it out to use the cluster default
+(`operator.defaults.sourcePath`, `/usr/share/nginx/html` out of the box). See
+[`examples/image-paths.yaml`](examples/image-paths.yaml) for the usual locations:
+`/app/dist` for Vite, `/app/build` for Create React App, `/src/public` for Hugo,
+`/usr/share/caddy` for Caddy.
 
 Push it, then create a `StaticSite`:
 
@@ -388,6 +396,7 @@ Complete, commented manifests in [`examples/`](examples/):
 | Example | What it shows |
 | --- | --- |
 | [`minimal.yaml`](examples/minimal.yaml) | The smallest useful `StaticSite` |
+| [`image-paths.yaml`](examples/image-paths.yaml) | Pointing at the directory a given image keeps the site in |
 | [`aws-production.yaml`](examples/aws-production.yaml) | AWS with cache policy, tags and DNS |
 | [`s3-compatible-provider.yaml`](examples/s3-compatible-provider.yaml) | A non-AWS endpoint, path style, per-site credentials |
 | [`spa.yaml`](examples/spa.yaml) | A single page application routed client side |
