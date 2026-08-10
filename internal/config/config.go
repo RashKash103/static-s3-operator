@@ -179,7 +179,8 @@ func (d *Defaults) BindFlags(fs *flag.FlagSet) {
 		"Address buckets as endpoint/bucket when a StaticSite omits spec.bucket.forcePathStyle. "+
 			"Most S3-compatible providers need this.")
 	fs.StringVar(&d.WebsiteEndpointTemplate, "default-website-endpoint-template", d.WebsiteEndpointTemplate,
-		"Go template for status.websiteURL, evaluated with {{.Bucket}}, {{.Region}} and {{.Endpoint}}. "+
+		"Go template for status.websiteURL, evaluated with {{.Bucket}}, {{.Region}}, {{.Endpoint}} "+
+			"(the endpoint's host, without the scheme), {{.EndpointURL}} (with it) and {{.Scheme}}. "+
 			"Used when a StaticSite omits spec.bucket.websiteEndpointTemplate.")
 	fs.StringVar(&d.IndexDocument, "default-index-document", d.IndexDocument,
 		"Index document used when a StaticSite omits spec.bucket.website.indexDocument.")

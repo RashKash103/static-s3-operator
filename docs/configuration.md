@@ -86,7 +86,7 @@ including two sites published from different subdirectories of one image.
 | `name` | string | *generated, immutable* | Bucket name, 3–63 characters, lowercase. Leave it out and the operator derives one from the resource: see [How a bucket name is generated](#how-a-bucket-name-is-generated). |
 | `region` | string | *operator default* (`us-east-1`) | S3 region. |
 | `endpoint` | string | *operator default* (empty = AWS) | S3 **API** endpoint for a compatible provider. Without a scheme, https is assumed. |
-| `websiteEndpointTemplate` | string | *operator default* | Go template for `status.websiteURL`, with `{{.Bucket}}`, `{{.Region}}`, `{{.Endpoint}}`. Also what the `ExternalName` Service points at. See [Where the website URL comes from](#where-the-website-url-comes-from). |
+| `websiteEndpointTemplate` | string | *operator default* | Go template for `status.websiteURL`. Also what the `ExternalName` Service points at. See [Where the website URL comes from](#where-the-website-url-comes-from). |
 | `forcePathStyle` | bool | *operator default* (`false`) | Address the bucket as `endpoint/bucket`. Most compatible providers need this; AWS does not. |
 | `credentials` | object | operator's own | A Secret in this namespace: `secretRef.name`, plus `accessKeyIDKey`, `secretAccessKeyKey`, `sessionTokenKey` (defaults `accessKeyID`, `secretAccessKey`, `sessionToken`). |
 | `create` | bool | `true` | Create the bucket if absent. `false` adopts a bucket managed elsewhere, which is then never deleted. |
@@ -267,6 +267,44 @@ Then turn what it prints into a template by substituting the bucket and region:
 websiteEndpointTemplate: "http://{{ .Bucket }}.website-{{ .Region }}.example-object-store.com"
 ```
 
+The template is evaluated with:
+
+| Variable | Value |
+| --- | --- |
+| `{{ .Bucket }}` | The bucket name |
+| `{{ .Region }}` | The bucket's region |
+| `{{ .Endpoint }}` | The API endpoint's **host**, port included, scheme excluded — `s3.example.com`, `minio.storage.svc:9000` |
+| `{{ .EndpointURL }}` | The whole API endpoint, scheme included — `https://s3.example.com` |
+| `{{ .Scheme }}` | The API endpoint's scheme. Empty for AWS, which has no configured endpoint |
+
+`{{ .Endpoint }}` is the host alone because a website hostname is nearly always the
+API host with something prefixed or substituted, which is what a website template is
+for:
+
+```yaml
+# endpoint: us-east-1.example-object-store.com
+websiteEndpointTemplate: "http://{{ .Bucket }}.website-{{ .Endpoint }}"
+# http://my-site.website-us-east-1.example-object-store.com
+```
+
+Use `{{ .EndpointURL }}` when you want the scheme, as in a path-style URL:
+
+```yaml
+websiteEndpointTemplate: "{{ .EndpointURL }}/{{ .Bucket }}/"
+```
+
+**Mind what the rendered value has to be.** The `ExternalName` Service aliases the
+*hostname* of whatever this produces, so a template that renders something other
+than a URL is not rejected — it becomes an unresolvable CNAME. `{{ .Endpoint }}`
+carried the scheme before v0.3.0, which made the template above render
+`http://my-site.website-https://...` and alias the hostname `my-site.website-https`.
+Check the result:
+
+```sh
+kubectl get staticsite docs -n web -o jsonpath='{.status.websiteURL}{"\n"}'
+kubectl get service docs -n web -o jsonpath='{.spec.externalName}{"\n"}'
+```
+
 Because the URL is rendered from `spec.bucket.region`, that field has to match the
 bucket's real region. A mismatch produces a wrong URL, and on AWS it also makes S3
 answer requests with a redirect, so the sync fails loudly rather than silently
@@ -439,12 +477,64 @@ than silently preferring one.
 | `s3.skipTLSVerify` | `false` | Development only. |
 | `externalDNS.hostnameAnnotation` | `external-dns.alpha.kubernetes.io/hostname` | Where `spec.service.hostnames` are rendered. `""` renders nothing. |
 
+### metrics, prometheus and certManager
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `metrics.enabled` | `true` | Serve `/metrics`. `false` binds the metrics server to `0`, disabling it. |
+| `metrics.port` | `8443` | Port the metrics endpoint binds to. |
+| `metrics.secure` | `true` | Serve over HTTPS with authn/authz. `false` serves plain HTTP with no authorization. |
+| `metrics.readers` | `[]` | Service accounts permitted to scrape. See below. |
+| `prometheus.enabled` | `false` | Create a `ServiceMonitor`. Needs prometheus-operator. |
+| `certManager.enabled` | `false` | Issue a certificate for the metrics endpoint. Needs cert-manager. |
+
+**A scraper needs authorizing.** With `metrics.secure`, the endpoint is behind
+authn/authz: a scraper presents its ServiceAccount token and is authorized through a
+`SubjectAccessReview`. The chart ships a `metrics-reader` ClusterRole, but it cannot
+know which ServiceAccount Prometheus runs as, so name it:
+
+```yaml
+metrics:
+  readers:
+    - name: prometheus-k8s
+      namespace: monitoring
+```
+
+Without that, scrapes are refused with `403` — which reads like a TLS or
+`ServiceMonitor` problem and is neither. `metrics-auth-role` is a different thing and
+is already bound to the operator: it permits the operator to *perform* the
+`TokenReview` and `SubjectAccessReview`.
+
+If you would rather not manage that binding, `metrics.secure: false` removes the
+requirement: the endpoint then serves plain HTTP with no authorization, so neither
+`metrics.readers` nor `certManager.enabled` does anything (the certificate templates
+are conditioned on `metrics.secure`, so enabling cert-manager alongside insecure
+metrics is a no-op rather than a misconfiguration). The cost is that anything able to
+reach the Pod on `metrics.port` can read the metrics. Those are controller-runtime's
+own counters — reconcile totals, workqueue depth, Go runtime statistics — and this
+operator registers none of its own, so no bucket name, namespace or site name appears
+in them.
+
+Before adding a binding, check whether your Prometheus already has the access; many
+kube-prometheus-stack installations grant `/metrics` cluster-wide:
+
+```sh
+kubectl auth can-i get /metrics --as=system:serviceaccount:monitoring:prometheus-k8s
+```
+
+**TLS, with and without cert-manager.** Left off, the manager serves the self-signed
+certificate controller-runtime generates for itself and the `ServiceMonitor` scrapes
+it with `insecureSkipVerify: true`. Turned on, the chart issues a self-signed
+`Certificate`, the manager serves it (`--metrics-cert-path`), and the
+`ServiceMonitor` verifies against it. Either is coherent; before v0.3.0 the flag
+only added cert references to the `ServiceMonitor` while nothing issued the
+certificate, which stopped metrics being collected.
+
 ### The rest
 
 Standard Kubebuilder chart values: `manager.*` (image, replicas, resources,
 scheduling, security contexts), `rbac.namespaced`, `rbac.helpers.enabled`,
-`serviceAccount.*`, `crd.enabled`, `crd.keep`, `metrics.*`, `certManager.enabled`,
-`prometheus.enabled`, `networkPolicy.enabled`.
+`serviceAccount.*`, `crd.enabled`, `crd.keep`, `networkPolicy.enabled`.
 
 `crd.keep` defaults to `true`. Deleting the CRD deletes every `StaticSite`, and
 with them their buckets.

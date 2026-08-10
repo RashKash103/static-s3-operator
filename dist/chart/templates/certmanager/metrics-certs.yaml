@@ -1,0 +1,48 @@
+{{- /*
+The serving certificate for the metrics endpoint.
+
+certManager.enabled used to only add cert references to the ServiceMonitor while
+nothing issued the certificate, so turning it on pointed Prometheus at a Secret
+that never existed and metrics stopped being collected. These are the resources
+that make that flag mean something.
+
+The Secret name is fixed rather than release-prefixed because the ServiceMonitor
+the Helm plugin generates refers to it by that literal name. Running two releases
+of this operator in one namespace would collide here, which is not a configuration
+that works anyway -- the CRDs and ClusterRoles are cluster-scoped.
+*/ -}}
+{{- if and .Values.certManager.enabled .Values.metrics.enabled .Values.metrics.secure }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: {{ include "static-s3-operator.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: {{ include "static-s3-operator.resourceName" (dict "suffix" "selfsigned-issuer" "context" $) }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: {{ include "static-s3-operator.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: {{ include "static-s3-operator.resourceName" (dict "suffix" "metrics-certs" "context" $) }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # These must cover the serverName the ServiceMonitor verifies against, or the
+  # scrape fails where it previously only skipped verification.
+  dnsNames:
+    - {{ include "static-s3-operator.resourceName" (dict "suffix" "controller-manager-metrics-service" "context" $) }}.{{ .Release.Namespace }}.svc
+    - {{ include "static-s3-operator.resourceName" (dict "suffix" "controller-manager-metrics-service" "context" $) }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "static-s3-operator.resourceName" (dict "suffix" "selfsigned-issuer" "context" $) }}
+  secretName: metrics-server-cert
+{{- end }}

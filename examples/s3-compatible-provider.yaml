@@ -43,6 +43,16 @@ spec:
     #
     # Without it, the operator guesses from the endpoint: with forcePathStyle that
     # guess is "endpoint/bucket/", which a CNAME cannot express.
+    #
+    # Available: {{ .Bucket }}, {{ .Region }}, {{ .Endpoint }} (the endpoint's host
+    # alone, no scheme), {{ .EndpointURL }} (with the scheme) and {{ .Scheme }}.
+    # Since a website hostname is usually the API host with something prefixed,
+    # "http://{{ .Bucket }}.website-{{ .Endpoint }}" works here too and does not
+    # repeat the domain.
+    #
+    # Whatever this renders, the Service aliases its hostname -- so a template that
+    # does not produce a URL gives a broken CNAME instead of an error. Check it with
+    # `kubectl get staticsite <name> -o jsonpath='{.status.websiteURL}'`.
     websiteEndpointTemplate: "http://{{ .Bucket }}.website-{{ .Region }}.example-object-store.com"
 
     website:

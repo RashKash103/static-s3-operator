@@ -152,17 +152,26 @@ files:
 kubebuilder edit --plugins=helm/v2-alpha --force
 ```
 
-Afterwards, re-apply the one hand-written hunk in
+Afterwards, re-apply the hand-written hunks in
 `dist/chart/templates/manager/manager.yaml`:
 
 ```
 {{- include "static-s3-operator.operatorArgs" . | nindent 8 }}
 ```
 
+and the three `certManager.enabled` hunks that make the metrics certificate real —
+the `--metrics-cert-path` argument, the `metrics-certs` volume, and its mount. The
+plugin generates the `Certificate` references in the ServiceMonitor but nothing that
+issues one and nothing that serves it, so on its own that flag breaks metrics rather
+than securing them. `templates/certmanager/metrics-certs.yaml` supplies the
+`Issuer` and `Certificate`; it is not plugin-owned and survives.
+
 Everything else specific to this project lives in files the plugin does not
 generate — `templates/_operator.tpl`, `templates/operator/credentials.yaml`,
-`values.schema.json` — and the `operator:` block in `values.yaml`, which is worth
-checking survived. `make helm-chart` prints this reminder.
+`templates/certmanager/metrics-certs.yaml`,
+`templates/rbac/metrics-reader-binding.yaml`, `values.schema.json` — and the
+`operator:` block in `values.yaml`, which is worth checking survived.
+`make helm-chart` prints this reminder.
 
 **The chart carries copies of generated output**, and it falling behind the operator
 has already broken an install twice: once a CRD still requiring a field the API had

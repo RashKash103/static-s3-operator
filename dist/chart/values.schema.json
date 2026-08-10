@@ -57,7 +57,7 @@
             },
             "websiteEndpointTemplate": {
               "type": "string",
-              "description": "Go template for a site's public URL, evaluated with {{.Bucket}}, {{.Region}} and {{.Endpoint}}."
+              "description": "Go template for a site's public URL, evaluated with {{ .Bucket }}, {{ .Region }}, {{ .Endpoint }} (the endpoint's host, port included and scheme excluded), {{ .EndpointURL }} (the whole endpoint, scheme included) and {{ .Scheme }}. The ExternalName Service aliases the hostname of whatever this renders, so a template that does not produce a URL yields a broken CNAME rather than an error."
             },
             "indexDocument": {
               "type": "string",
@@ -416,15 +416,42 @@
       "type": "object",
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Expose the controller's /metrics endpoint."
         },
         "port": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 65535
+          "maximum": 65535,
+          "description": "Port the metrics endpoint binds to."
         },
         "secure": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Serve metrics over HTTPS with authn/authz (true) or plain HTTP (false)."
+        },
+        "readers": {
+          "type": "array",
+          "description": "Service accounts bound to the metrics-reader ClusterRole, permitting them to scrape /metrics. Required when secure is set, since the endpoint authorizes scrapers through a SubjectAccessReview and refuses unbound ones with 403.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "namespace"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ServiceAccount name, for example prometheus-k8s."
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Namespace of the ServiceAccount."
+              }
+            }
+          }
         }
       }
     },
@@ -432,7 +459,8 @@
       "type": "object",
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Issue a self-signed certificate for the metrics endpoint through cert-manager, have the manager serve it, and have the ServiceMonitor verify against it rather than skipping verification. Requires cert-manager in the cluster."
         }
       }
     },

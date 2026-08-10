@@ -141,7 +141,7 @@
               "type": "object"
             },
             "websiteEndpointTemplate": {
-              "description": "websiteEndpointTemplate builds status.websiteURL for providers whose\nwebsite hostname differs from their API endpoint. It is a Go template\nevaluated with {{.Bucket}}, {{.Region}} and {{.Endpoint}}, for example\n\"http://{{.Bucket}}.website-{{.Region}}.example-object-store.com\". Falls\nback to the operator's --default-website-endpoint-template, and then to the\nAWS or path-style form derived from the endpoint.",
+              "description": "websiteEndpointTemplate builds status.websiteURL for providers whose\nwebsite hostname differs from their API endpoint, for example\n\"http://{{.Bucket}}.website-{{.Region}}.example-object-store.com\". Falls\nback to the operator's --default-website-endpoint-template, and then to the\nAWS or path-style form derived from the endpoint.\n\nIt is a Go template evaluated with:\n\n  {{.Bucket}}       the bucket name\n  {{.Region}}       the bucket's region\n  {{.Endpoint}}     the API endpoint's host, port included, scheme excluded:\n                    \"s3.example.com\", \"minio.storage.svc:9000\"\n  {{.EndpointURL}}  the whole API endpoint, scheme included\n  {{.Scheme}}       the API endpoint's scheme, empty for AWS\n\nThe ExternalName Service aliases the hostname of whatever this renders, so a\ntemplate that produces something other than a URL yields an unresolvable\nCNAME rather than an error.",
               "maxLength": 2048,
               "type": "string"
             }

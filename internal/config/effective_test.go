@@ -12,6 +12,7 @@ the full license text.
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -284,6 +285,94 @@ func TestWebsiteURLTemplateFromOperatorDefault(t *testing.T) {
 	}
 	if want := "https://acme-docs.sites.example.com"; effective.WebsiteURL != want {
 		t.Errorf("WebsiteURL = %q, want %q", effective.WebsiteURL, want)
+	}
+}
+
+// TestWebsiteURLTemplateEndpointFields pins the template data down. Endpoint used
+// to be the whole endpoint, scheme and all, so the natural template for a
+// virtual-hosted website host produced "https://bucket.https://host" and the
+// ExternalName Service ended up aliasing the hostname "bucket.https" -- a broken
+// CNAME rather than an error.
+func TestWebsiteURLTemplateEndpointFields(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+		template string
+		want     string
+	}{
+		{
+			name:     "Endpoint is the bare host",
+			endpoint: "us-mia-1.example-object-store.com",
+			template: "http://{{.Bucket}}.website-{{.Endpoint}}",
+			want:     "http://acme-docs.website-us-mia-1.example-object-store.com",
+		},
+		{
+			name:     "a scheme on the endpoint does not leak into Endpoint",
+			endpoint: "https://us-mia-1.example-object-store.com",
+			template: "http://{{.Bucket}}.website-{{.Endpoint}}",
+			want:     "http://acme-docs.website-us-mia-1.example-object-store.com",
+		},
+		{
+			name:     "Endpoint keeps a port",
+			endpoint: "http://minio.storage.svc:9000",
+			template: "http://{{.Bucket}}.{{.Endpoint}}",
+			want:     "http://acme-docs.minio.storage.svc:9000",
+		},
+		{
+			name:     "EndpointURL carries the scheme",
+			endpoint: "us-mia-1.example-object-store.com",
+			template: "{{.EndpointURL}}/{{.Bucket}}/",
+			want:     "https://us-mia-1.example-object-store.com/acme-docs/",
+		},
+		{
+			name:     "Scheme is available on its own",
+			endpoint: "http://minio.storage.svc:9000",
+			template: "{{.Scheme}}://{{.Bucket}}.{{.Endpoint}}",
+			want:     "http://acme-docs.minio.storage.svc:9000",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defaults := New()
+			defaults.SyncerImage = "operator:v1"
+
+			effective, err := defaults.Effective(site(func(s *webv1alpha1.StaticSite) {
+				s.Spec.Bucket.Endpoint = tc.endpoint
+				s.Spec.Bucket.WebsiteEndpointTemplate = tc.template
+			}))
+			if err != nil {
+				t.Fatalf("Effective returned an error: %v", err)
+			}
+			if effective.WebsiteURL != tc.want {
+				t.Errorf("WebsiteURL = %q, want %q", effective.WebsiteURL, tc.want)
+			}
+		})
+	}
+}
+
+// TestWebsiteURLTemplateGivesAResolvableCNAME is the consequence that actually
+// mattered: whatever the template renders, the Service has to alias a hostname a
+// resolver could look up.
+func TestWebsiteURLTemplateGivesAResolvableCNAME(t *testing.T) {
+	defaults := New()
+	defaults.SyncerImage = "operator:v1"
+
+	effective, err := defaults.Effective(site(func(s *webv1alpha1.StaticSite) {
+		s.Spec.Bucket.Endpoint = "us-mia-1.example-object-store.com"
+		s.Spec.Bucket.WebsiteEndpointTemplate = "http://{{.Bucket}}.website-{{.Endpoint}}"
+	}))
+	if err != nil {
+		t.Fatalf("Effective returned an error: %v", err)
+	}
+
+	want := "acme-docs.website-us-mia-1.example-object-store.com"
+	if effective.ServiceExternalName != want {
+		t.Errorf("ServiceExternalName = %q, want %q", effective.ServiceExternalName, want)
+	}
+	if strings.Contains(effective.ServiceExternalName, ":") ||
+		strings.Contains(effective.ServiceExternalName, "/") {
+		t.Errorf("ServiceExternalName %q is not a hostname", effective.ServiceExternalName)
 	}
 }
 

@@ -154,18 +154,46 @@ verify-generated: manifests generate schemas build-installer ## Fail if generate
 helm-chart: manifests generate ## Regenerate the Helm chart from the kustomize output.
 	@echo "Regenerating the Helm chart. The chart's operator settings live in"
 	@echo "dist/chart/templates/_operator.tpl and the values block in values.yaml;"
-	@echo "re-apply the operatorArgs include in templates/manager/manager.yaml if the"
-	@echo "plugin overwrites it."
+	@echo "re-apply these to templates/manager/manager.yaml if the plugin"
+	@echo "overwrites them:"
+	@echo "  - the operatorArgs include"
+	@echo "  - the certManager.enabled hunks: --metrics-cert-path, the"
+	@echo "    metrics-certs volume, and its mount"
 	kubebuilder edit --plugins=helm/v2-alpha --force
 
 .PHONY: helm-lint
+# Under bin/ deliberately: anywhere tracked and a leftover render would show up as
+# drift in verify-generated.
+SCRATCH_RENDER ?= $(LOCALBIN)/helm-lint-render.yaml
 helm-lint: ## Lint and render the Helm chart.
+	@mkdir -p $(LOCALBIN)
 	helm lint dist/chart
 	helm template static-s3-operator dist/chart >/dev/null
 	helm template static-s3-operator dist/chart \
 		--set operator.credentials.create=true \
 		--set operator.credentials.accessKeyID=test \
 		--set operator.credentials.secretAccessKey=test >/dev/null
+	@# The monitoring paths, which are off by default and so otherwise unrendered.
+	@# certManager.enabled once added cert references to the ServiceMonitor with
+	@# nothing issuing or serving the certificate.
+	helm template static-s3-operator dist/chart \
+		--set metrics.enabled=true \
+		--set prometheus.enabled=true \
+		--set certManager.enabled=true \
+		--set 'metrics.readers[0].name=prometheus-k8s' \
+		--set 'metrics.readers[0].namespace=monitoring' > $(SCRATCH_RENDER)
+	@# A Certificate the manager never mounts, or a mount without a Certificate,
+	@# both render happily and both break metrics.
+	@grep -q 'kind: Certificate' $(SCRATCH_RENDER) \
+		|| { echo "certManager.enabled rendered no Certificate"; exit 1; }
+	@grep -q -- '--metrics-cert-path=' $(SCRATCH_RENDER) \
+		|| { echo "certManager.enabled did not give the manager --metrics-cert-path"; exit 1; }
+	@grep -q 'secretName: metrics-server-cert' $(SCRATCH_RENDER) \
+		|| { echo "the metrics-certs volume does not reference the issued Secret"; exit 1; }
+	@grep -q 'name: prometheus-k8s' $(SCRATCH_RENDER) \
+		|| { echo "metrics.readers produced no ClusterRoleBinding subject"; exit 1; }
+	@rm -f $(SCRATCH_RENDER)
+	helm template static-s3-operator dist/chart --set metrics.enabled=false >/dev/null
 	@echo "Helm chart renders cleanly."
 
 # The e2e suite runs the whole thing in a throwaway Kind cluster: it builds the

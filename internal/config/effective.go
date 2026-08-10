@@ -279,9 +279,25 @@ func (e *Effective) SyncSpecHash() string {
 
 // websiteURLData is the data a website endpoint template is rendered with.
 type websiteURLData struct {
-	Bucket   string
-	Region   string
+	// Bucket is the bucket the site publishes to.
+	Bucket string
+	// Region is the bucket's region.
+	Region string
+	// Endpoint is the API endpoint's host, including a port if it has one and
+	// excluding the scheme: "s3.example.com", "minio.storage.svc:9000".
+	//
+	// A website hostname is nearly always the API host with something prefixed or
+	// substituted, so the host on its own is the form a template needs. It used to
+	// carry the scheme, which made the obvious template produce
+	// "https://bucket.https://s3.example.com" -- and, worse, a Service pointing at
+	// the hostname "bucket.https". EndpointURL is the full form.
 	Endpoint string
+	// EndpointURL is the whole API endpoint, scheme included, as the S3 client uses
+	// it. Useful for a path-style URL: "{{.EndpointURL}}/{{.Bucket}}/".
+	EndpointURL string
+	// Scheme is the API endpoint's scheme, "https" or "http". Empty for AWS, which
+	// has no configured endpoint.
+	Scheme string
 }
 
 // awsDashWebsiteRegions are the AWS regions whose website endpoints use
@@ -312,7 +328,15 @@ var awsDashWebsiteRegions = map[string]bool{
 // S3-compatible endpoint gets a best guess derived from the API endpoint, which
 // is right often enough to be useful and overridable when it is not.
 func renderWebsiteURL(tmpl string, e *Effective) (string, error) {
-	data := websiteURLData{Bucket: e.Bucket, Region: e.Region, Endpoint: e.Endpoint}
+	data := websiteURLData{Bucket: e.Bucket, Region: e.Region, EndpointURL: e.Endpoint}
+	if e.Endpoint != "" {
+		// An endpoint that will not parse is reported by the fallback path below; a
+		// template is handed whatever host could be recovered, which is empty.
+		if parsed, err := url.Parse(e.Endpoint); err == nil {
+			data.Endpoint = parsed.Host
+			data.Scheme = parsed.Scheme
+		}
+	}
 
 	if tmpl != "" {
 		parsed, err := template.New("websiteEndpoint").Option("missingkey=error").Parse(tmpl)

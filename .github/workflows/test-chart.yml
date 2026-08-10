@@ -56,8 +56,12 @@ jobs:
         run: make install-helm
 
       - name: Lint Helm Chart
-        run: |
-          helm lint ./dist/chart
+        # make helm-lint, not a bare `helm lint`: it also renders the paths that are
+        # off by default -- metrics, prometheus, cert-manager -- and asserts they
+        # produce a coherent result. certManager.enabled once rendered cert
+        # references with nothing issuing or serving the certificate, which lints
+        # perfectly and silently stops metrics being collected.
+        run: make helm-lint
 
       - name: Check that values.schema.json is enforced
         # helm lint only applies the schema to the values it is given, so an

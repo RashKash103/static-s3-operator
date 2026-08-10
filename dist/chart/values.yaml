@@ -210,11 +210,24 @@ operator:
     ##
     forcePathStyle: false
 
-    ## Go template for the site's public URL, evaluated with {{ .Bucket }},
-    ## {{ .Region }} and {{ .Endpoint }}. Set this when your provider's website
-    ## hostname differs from its API endpoint -- it is also what the generated
-    ## ExternalName Service points at.
-    ## Example: http://{{ .Bucket }}.website-{{ .Region }}.example-object-store.com
+    ## Go template for the site's public URL. Set this when your provider's
+    ## website hostname differs from its API endpoint -- it is also what the
+    ## generated ExternalName Service points at.
+    ##
+    ## Evaluated with:
+    ##   {{ .Bucket }}       the bucket name
+    ##   {{ .Region }}       the bucket's region
+    ##   {{ .Endpoint }}     the endpoint's host, port included, scheme excluded
+    ##   {{ .EndpointURL }}  the whole endpoint, scheme included
+    ##   {{ .Scheme }}       the endpoint's scheme, empty for AWS
+    ##
+    ## Examples:
+    ##   http://{{ .Bucket }}.website-{{ .Region }}.example-object-store.com
+    ##   http://{{ .Bucket }}.website-{{ .Endpoint }}
+    ##   {{ .EndpointURL }}/{{ .Bucket }}/          # path style
+    ##
+    ## The Service aliases the hostname of whatever this renders, so a template
+    ## that does not produce a URL becomes a broken CNAME rather than an error.
     ##
     websiteEndpointTemplate: ""
 
@@ -368,12 +381,40 @@ metrics:
   enabled: true
   # Metrics server port
   port: 8443
-  # Enable secure metrics: HTTPS with certs/auth (true) or HTTP (false).
-  # Note: Metrics authn/authz needs ClusterRole access.
+  ## Serve metrics over HTTPS with authn/authz (true), or plain HTTP with no
+  ## authorization at all (false).
+  ##
+  ## With this off, `readers` and `certManager` are both unnecessary -- there is
+  ## nothing to authorize and nothing to encrypt -- and anything able to reach the
+  ## Pod on `port` can read the metrics. That exposes controller-runtime's own
+  ## counters: reconcile totals, workqueue depth and Go runtime statistics. This
+  ## operator registers no metrics of its own, so no bucket name, namespace or site
+  ## name appears in them.
+  ##
   secure: true
 
+  ## Service accounts allowed to scrape /metrics.
+  ##
+  ## With `secure` set, the endpoint is behind authn/authz: a scraper presenting
+  ## its ServiceAccount token is authorized through a SubjectAccessReview, and
+  ## without a binding the scrape is refused with 403. The chart cannot guess
+  ## which ServiceAccount Prometheus runs as, so name it here:
+  ##
+  ##   readers:
+  ##     - name: prometheus-k8s
+  ##       namespace: monitoring
+  ##
+  readers: []
+
 ## Cert-manager integration for TLS certificates.
-## Required for webhook certificates and metrics endpoint certificates.
+##
+## With this on, the chart issues a self-signed certificate for the metrics
+## endpoint, the manager serves it, and the ServiceMonitor verifies against it
+## instead of skipping verification. Leave it off to have the manager serve the
+## certificate controller-runtime generates for itself, which the ServiceMonitor
+## then scrapes with insecureSkipVerify.
+##
+## Requires cert-manager in the cluster.
 ##
 certManager:
   enabled: false

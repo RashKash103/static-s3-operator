@@ -79,6 +79,13 @@ spec:
         {{- if not .Values.metrics.secure }}
         - --metrics-secure=false
         {{- end }}
+        {{- if and .Values.certManager.enabled .Values.metrics.secure }}
+        {{- /* Serve the cert-manager certificate rather than the self-signed one
+             controller-runtime generates, so that a ServiceMonitor verifying
+             against it succeeds. Without this the chart issued a certificate
+             nothing presented. */}}
+        - --metrics-cert-path=/tmp/k8s-metrics-server/metrics-certs
+        {{- end }}
         {{- else }}
         # Bind to :0 to disable the controller-runtime managed metrics server
         - --metrics-bind-address=0
@@ -141,9 +148,14 @@ spec:
           {}
           {{- end }}
         volumeMounts:
+          {{- if and .Values.certManager.enabled .Values.metrics.enabled .Values.metrics.secure }}
+          - name: metrics-certs
+            mountPath: /tmp/k8s-metrics-server/metrics-certs
+            readOnly: true
+          {{- end }}
           {{- if .Values.manager.extraVolumeMounts }}
           {{- toYaml .Values.manager.extraVolumeMounts | nindent 10 }}
-          {{- else }}
+          {{- else if not (and .Values.certManager.enabled .Values.metrics.enabled .Values.metrics.secure) }}
           []
           {{- end }}
       securityContext:
@@ -157,9 +169,18 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.manager.terminationGracePeriodSeconds }}
       {{- end }}
       volumes:
+        {{- if and .Values.certManager.enabled .Values.metrics.enabled .Values.metrics.secure }}
+        - name: metrics-certs
+          secret:
+            secretName: metrics-server-cert
+            # Not optional: starting without it would serve the self-signed cert
+            # the ServiceMonitor is no longer willing to accept, which is harder to
+            # diagnose than a Pod that will not start.
+            optional: false
+        {{- end }}
         {{- if .Values.manager.extraVolumes }}
         {{- toYaml .Values.manager.extraVolumes | nindent 8 }}
-        {{- else }}
+        {{- else if not (and .Values.certManager.enabled .Values.metrics.enabled .Values.metrics.secure) }}
         []
         {{- end }}
 {{- end }}

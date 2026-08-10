@@ -252,11 +252,23 @@ spec:
                   websiteEndpointTemplate:
                     description: |-
                       websiteEndpointTemplate builds status.websiteURL for providers whose
-                      website hostname differs from their API endpoint. It is a Go template
-                      evaluated with {{.Bucket}}, {{.Region}} and {{.Endpoint}}, for example
+                      website hostname differs from their API endpoint, for example
                       "http://{{.Bucket}}.website-{{.Region}}.example-object-store.com". Falls
                       back to the operator's --default-website-endpoint-template, and then to the
                       AWS or path-style form derived from the endpoint.
+
+                      It is a Go template evaluated with:
+
+                        {{.Bucket}}       the bucket name
+                        {{.Region}}       the bucket's region
+                        {{.Endpoint}}     the API endpoint's host, port included, scheme excluded:
+                                          "s3.example.com", "minio.storage.svc:9000"
+                        {{.EndpointURL}}  the whole API endpoint, scheme included
+                        {{.Scheme}}       the API endpoint's scheme, empty for AWS
+
+                      The ExternalName Service aliases the hostname of whatever this renders, so a
+                      template that produces something other than a URL yields an unresolvable
+                      CNAME rather than an error.
                     maxLength: 2048
                     type: string
                 type: object
