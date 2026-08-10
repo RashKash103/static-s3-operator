@@ -140,7 +140,15 @@ verify-generated: manifests generate schemas build-installer ## Fail if generate
 		git --no-pager diff -- config dist api; \
 		exit 1; \
 	fi
-	@echo "Generated files are up to date."
+	@# go.mod belongs here too. Leaving it to CI meant a missing `go mod tidy` after
+	@# an import change was only caught after a push, twice.
+	go mod tidy
+	@if [ -n "$$(git status --porcelain -- go.mod go.sum)" ]; then \
+		echo "go.mod is not tidy. Run 'go mod tidy' and commit the result:"; \
+		git --no-pager diff -- go.mod go.sum; \
+		exit 1; \
+	fi
+	@echo "Generated files are up to date and go.mod is tidy."
 
 .PHONY: helm-chart
 helm-chart: manifests generate ## Regenerate the Helm chart from the kustomize output.

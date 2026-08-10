@@ -31,14 +31,7 @@ jobs:
       # CRDs, RBAC, deepcopy, the standalone JSON Schemas and the single-file
       # installer are all derived from the code. A stale one is a lie that only
       # shows up when somebody installs from it.
+      # The target checks go.mod too, so a local `make verify-generated` catches
+      # everything this job would.
       - name: Regenerate and compare
         run: make verify-generated
-
-      - name: Check that go.mod is tidy
-        run: |
-          go mod tidy
-          if [ -n "$(git status --porcelain -- go.mod go.sum)" ]; then
-            echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy' and commit the result."
-            git --no-pager diff -- go.mod go.sum
-            exit 1
-          fi
