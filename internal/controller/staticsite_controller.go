@@ -116,6 +116,11 @@ func (r *StaticSiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		r.Recorder.Event(site, corev1.EventTypeWarning, webv1alpha1.ReasonInvalidSpec, effectiveErr.Error())
 		return ctrl.Result{}, nil
 	}
+	if effective.BucketGenerated && site.Status.BucketName == "" {
+		// Worth one line: the name is derived from the resource, and somebody looking
+		// for the bucket in a console needs to know what it is called.
+		log.Info("Derived a bucket name for this StaticSite", "bucket", effective.Bucket)
+	}
 	site.Status.BucketName = effective.Bucket
 
 	if !site.DeletionTimestamp.IsZero() {

@@ -1,0 +1,47 @@
+# Letting the operator name the bucket, and choosing the name yourself.
+#
+# spec.bucket.name is optional. Left out, the operator derives it from the
+# resource: with the default template that is "<namespace>-<name>". The rule is
+# documented in docs/configuration.md, so the name is something you can work out
+# rather than something you have to discover.
+#
+# Whichever way the name is decided, it is fixed for the life of the resource. It
+# is recorded in status.bucketName and reused from there, so changing the cluster's
+# template later does not move an existing site onto a new bucket.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+
+# Derived: this publishes to "web-docs".
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:latest
+---
+# Also derived, and worth noting: the resource name may contain dots, which are
+# replaced with hyphens because a bucket name containing a dot cannot be reached at
+# bucket.endpoint over HTTPS. This publishes to "web-marketing-acme-example-com".
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: marketing.acme.example.com
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/marketing:latest
+---
+# Chosen explicitly, for a bucket that already exists or whose name has to match a
+# hostname. An explicit name is immutable: to publish elsewhere, create a new
+# StaticSite.
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: blog
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/blog:latest
+  bucket:
+    name: blog-acme-example-com

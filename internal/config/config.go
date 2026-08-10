@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -41,6 +42,9 @@ type Defaults struct {
 	SourcePath string
 	// PullInterval fills in spec.source.pullInterval. Zero disables polling.
 	PullInterval time.Duration
+	// BucketNameTemplate generates spec.bucket.name when a site leaves it out. It
+	// is a Go template evaluated with {{.Namespace}}, {{.Name}} and {{.UID}}.
+	BucketNameTemplate string
 	// Region fills in spec.bucket.region.
 	Region string
 	// Endpoint fills in spec.bucket.endpoint. Empty means AWS S3.
@@ -118,11 +122,12 @@ type Defaults struct {
 // New returns the built-in defaults, before flags are parsed.
 func New() *Defaults {
 	return &Defaults{
-		SourcePath:    "/usr/share/nginx/html",
-		PullInterval:  24 * time.Hour,
-		Region:        defaultRegion,
-		IndexDocument: defaultIndexDocument,
-		ErrorDocument: "404.html",
+		SourcePath:         "/usr/share/nginx/html",
+		PullInterval:       24 * time.Hour,
+		BucketNameTemplate: "{{.Namespace}}-{{.Name}}",
+		Region:             defaultRegion,
+		IndexDocument:      defaultIndexDocument,
+		ErrorDocument:      "404.html",
 
 		ExternalDNSHostnameAnnotation: "external-dns.alpha.kubernetes.io/hostname",
 
@@ -149,6 +154,10 @@ func (d *Defaults) BindFlags(fs *flag.FlagSet) {
 	fs.DurationVar(&d.PullInterval, "default-pull-interval", d.PullInterval,
 		"How often to re-resolve a mutable image tag when a StaticSite omits spec.source.pullInterval. "+
 			"Zero disables polling.")
+	fs.StringVar(&d.BucketNameTemplate, "default-bucket-name-template", d.BucketNameTemplate,
+		"Go template generating a bucket name when a StaticSite omits spec.bucket.name, "+
+			"evaluated with {{.Namespace}}, {{.Name}} and {{.UID}}. Bucket names are global per "+
+			"provider, so give this a prefix of your own if the provider is shared.")
 	fs.StringVar(&d.Region, "default-region", d.Region,
 		"S3 region used when a StaticSite omits spec.bucket.region.")
 	fs.StringVar(&d.Endpoint, "default-endpoint", d.Endpoint,
@@ -224,6 +233,11 @@ func (d *Defaults) Validate() error {
 	}
 	if d.Region == "" {
 		problems = append(problems, "--default-region must not be empty")
+	}
+	if d.BucketNameTemplate == "" {
+		problems = append(problems, "--default-bucket-name-template must not be empty")
+	} else if _, err := template.New("bucketName").Parse(d.BucketNameTemplate); err != nil {
+		problems = append(problems, fmt.Sprintf("--default-bucket-name-template is not a valid template: %v", err))
 	}
 	if d.IndexDocument == "" {
 		problems = append(problems, "--default-index-document must not be empty")

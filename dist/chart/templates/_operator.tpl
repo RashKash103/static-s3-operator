@@ -25,6 +25,9 @@ default stays in effect for anything the chart leaves empty.
 {{- with $defaults.pullInterval }}
 - {{ printf "--default-pull-interval=%s" . | quote }}
 {{- end }}
+{{- with $defaults.bucketNameTemplate }}
+- {{ printf "--default-bucket-name-template=%s" . | quote }}
+{{- end }}
 {{- with $defaults.region }}
 - {{ printf "--default-region=%s" . | quote }}
 {{- end }}

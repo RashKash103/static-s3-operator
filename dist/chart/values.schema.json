@@ -12,7 +12,6 @@
       "type": "string",
       "description": "Fully override the generated resource names."
     },
-
     "operator": {
       "type": "object",
       "description": "Operator behaviour. Every setting here becomes a command line flag on the manager.",
@@ -32,6 +31,11 @@
               "type": "string",
               "pattern": "^0$|^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$",
               "description": "How often a mutable image tag is re-resolved, used when a StaticSite omits spec.source.pullInterval. \"0\" disables polling."
+            },
+            "bucketNameTemplate": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Go template generating a bucket name for a StaticSite that omits spec.bucket.name, rendered with {{ .Namespace }}, {{ .Name }} and {{ .UID }}. Bucket names are global per provider, so add a prefix of your own if the provider is shared."
             },
             "region": {
               "type": "string",
@@ -66,7 +70,6 @@
             }
           }
         },
-
         "externalDNS": {
           "type": "object",
           "description": "The ExternalName Service the operator maintains for each site.",
@@ -78,7 +81,6 @@
             }
           }
         },
-
         "syncer": {
           "type": "object",
           "description": "Sync Jobs.",
@@ -90,7 +92,11 @@
             },
             "imagePullPolicy": {
               "type": "string",
-              "enum": ["Always", "IfNotPresent", "Never"],
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
               "description": "Pull policy for the syncer image."
             },
             "maxExtractBytes": {
@@ -105,7 +111,6 @@
             }
           }
         },
-
         "reconcile": {
           "type": "object",
           "description": "Reconcile pacing.",
@@ -133,7 +138,6 @@
             }
           }
         },
-
         "s3": {
           "type": "object",
           "description": "S3 client behaviour for non-AWS providers.",
@@ -149,7 +153,6 @@
             }
           }
         },
-
         "credentials": {
           "type": "object",
           "description": "S3 credentials for sites that name none of their own. Prefer existingSecret so the access key never lands in a values file or a Helm release.",
@@ -201,70 +204,161 @@
               "not": {
                 "type": "object",
                 "properties": {
-                  "create": { "const": true },
-                  "existingSecret": { "type": "string", "minLength": 1 }
+                  "create": {
+                    "const": true
+                  },
+                  "existingSecret": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
-                "required": ["create", "existingSecret"]
+                "required": [
+                  "create",
+                  "existingSecret"
+                ]
               }
             },
             {
               "description": "Rendering a Secret needs both halves of the access key.",
               "if": {
                 "type": "object",
-                "properties": { "create": { "const": true } },
-                "required": ["create"]
+                "properties": {
+                  "create": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "create"
+                ]
               },
               "then": {
                 "type": "object",
                 "properties": {
-                  "accessKeyID": { "type": "string", "minLength": 1 },
-                  "secretAccessKey": { "type": "string", "minLength": 1 }
+                  "accessKeyID": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "secretAccessKey": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
-                "required": ["accessKeyID", "secretAccessKey"]
+                "required": [
+                  "accessKeyID",
+                  "secretAccessKey"
+                ]
               }
             }
           ]
         }
       }
     },
-
     "manager": {
       "type": "object",
       "description": "The controller manager Deployment.",
       "properties": {
-        "enabled": { "type": "boolean" },
-        "replicas": { "type": "integer", "minimum": 0 },
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
         "image": {
           "type": "object",
           "properties": {
-            "repository": { "type": "string", "minLength": 1 },
-            "tag": { "type": "string" },
-            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
           },
-          "required": ["repository"]
+          "required": [
+            "repository"
+          ]
         },
-        "args": { "type": "array", "items": { "type": "string" } },
-        "env": { "type": "array", "items": { "type": "object" } },
-        "envOverrides": { "type": "object" },
-        "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
-        "podSecurityContext": { "type": "object" },
-        "securityContext": { "type": "object" },
-        "resources": { "type": "object" },
-        "affinity": { "type": "object" },
-        "nodeSelector": { "type": "object" },
-        "tolerations": { "type": "array" },
-        "strategy": { "type": "object" },
-        "priorityClassName": { "type": "string" },
-        "topologySpreadConstraints": { "type": "array" },
-        "terminationGracePeriodSeconds": { "type": ["integer", "null"], "minimum": 0 },
-        "labels": { "type": "object" },
-        "annotations": { "type": "object" },
-        "pod": { "type": "object" },
-        "extraVolumes": { "type": "array" },
-        "extraVolumeMounts": { "type": "array" }
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "envOverrides": {
+          "type": "object"
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "podSecurityContext": {
+          "type": "object"
+        },
+        "securityContext": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object"
+        },
+        "tolerations": {
+          "type": "array"
+        },
+        "strategy": {
+          "type": "object"
+        },
+        "priorityClassName": {
+          "type": "string"
+        },
+        "topologySpreadConstraints": {
+          "type": "array"
+        },
+        "terminationGracePeriodSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "labels": {
+          "type": "object"
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "pod": {
+          "type": "object"
+        },
+        "extraVolumes": {
+          "type": "array"
+        },
+        "extraVolumeMounts": {
+          "type": "array"
+        }
       }
     },
-
     "rbac": {
       "type": "object",
       "properties": {
@@ -283,50 +377,75 @@
         }
       }
     },
-
     "serviceAccount": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" },
-        "name": { "type": "string" },
-        "annotations": { "type": "object" },
-        "labels": { "type": "object" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "labels": {
+          "type": "object"
+        }
       }
     },
-
     "crd": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean", "description": "Install the StaticSite CRD with the chart." },
+        "enabled": {
+          "type": "boolean",
+          "description": "Install the StaticSite CRD with the chart."
+        },
         "keep": {
           "type": "boolean",
           "description": "Keep the CRD when the release is uninstalled. Removing it deletes every StaticSite, and with them their buckets."
         }
       }
     },
-
     "metrics": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" },
-        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "secure": { "type": "boolean" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "secure": {
+          "type": "boolean"
+        }
       }
     },
-
     "certManager": {
       "type": "object",
-      "properties": { "enabled": { "type": "boolean" } }
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     },
-
     "prometheus": {
       "type": "object",
-      "properties": { "enabled": { "type": "boolean" } }
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     },
-
     "networkPolicy": {
       "type": "object",
-      "properties": { "enabled": { "type": "boolean" } }
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

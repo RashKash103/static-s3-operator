@@ -40,19 +40,22 @@ type Effective struct {
 	InsecureSkipTLSVerify bool
 
 	// Bucket
-	Bucket         string
-	Region         string
-	Endpoint       string
-	ForcePathStyle bool
-	CreateBucket   bool
-	DeletionPolicy webv1alpha1.DeletionPolicy
-	WebsiteEnabled bool
-	IndexDocument  string
-	ErrorDocument  string
-	PublicRead     bool
-	Policy         string
-	Tags           map[string]string
-	WebsiteURL     string
+	Bucket string
+	// BucketGenerated reports that the name was derived from the resource rather
+	// than given in the spec, which is worth saying once in a log line.
+	BucketGenerated bool
+	Region          string
+	Endpoint        string
+	ForcePathStyle  bool
+	CreateBucket    bool
+	DeletionPolicy  webv1alpha1.DeletionPolicy
+	WebsiteEnabled  bool
+	IndexDocument   string
+	ErrorDocument   string
+	PublicRead      bool
+	Policy          string
+	Tags            map[string]string
+	WebsiteURL      string
 
 	// Sync
 	DeleteRemoved       bool
@@ -88,6 +91,11 @@ func (d *Defaults) Effective(site *webv1alpha1.StaticSite) (*Effective, error) {
 	bucket := site.Spec.Bucket
 	sync := site.Spec.Sync
 
+	bucketName, generated, err := d.resolveBucketName(site)
+	if err != nil {
+		return nil, err
+	}
+
 	e := &Effective{
 		Image:                 src.Image,
 		SourcePath:            strings.TrimRight(firstNonEmpty(src.Path, d.SourcePath), "/"),
@@ -95,15 +103,16 @@ func (d *Defaults) Effective(site *webv1alpha1.StaticSite) (*Effective, error) {
 		PlainHTTP:             src.PlainHTTP,
 		InsecureSkipTLSVerify: src.InsecureSkipTLSVerify,
 
-		Bucket:         bucket.Name,
-		Region:         firstNonEmpty(bucket.Region, d.Region),
-		Endpoint:       normalizeEndpoint(firstNonEmpty(bucket.Endpoint, d.Endpoint)),
-		ForcePathStyle: boolValue(bucket.ForcePathStyle, d.ForcePathStyle),
-		CreateBucket:   boolValue(bucket.Create, true),
-		DeletionPolicy: bucket.DeletionPolicy,
-		PublicRead:     boolValue(bucket.PublicRead, true),
-		Policy:         bucket.Policy,
-		Tags:           bucket.Tags,
+		Bucket:          bucketName,
+		BucketGenerated: generated,
+		Region:          firstNonEmpty(bucket.Region, d.Region),
+		Endpoint:        normalizeEndpoint(firstNonEmpty(bucket.Endpoint, d.Endpoint)),
+		ForcePathStyle:  boolValue(bucket.ForcePathStyle, d.ForcePathStyle),
+		CreateBucket:    boolValue(bucket.Create, true),
+		DeletionPolicy:  bucket.DeletionPolicy,
+		PublicRead:      boolValue(bucket.PublicRead, true),
+		Policy:          bucket.Policy,
+		Tags:            bucket.Tags,
 
 		DeleteRemoved:       boolValue(sync.DeleteRemoved, true),
 		ACL:                 string(sync.ACL),
@@ -158,6 +167,39 @@ func (d *Defaults) Effective(site *webv1alpha1.StaticSite) (*Effective, error) {
 	d.applyServiceDefaults(site, e)
 
 	return e, nil
+}
+
+// resolveBucketName decides which bucket this site publishes to.
+//
+// The name is sticky. Once a site has one recorded in status, that is the bucket
+// it keeps using, even if the cluster's name template changes afterwards --
+// otherwise editing a cluster-wide default would quietly move every generated
+// site to a new bucket and orphan the old one.
+func (d *Defaults) resolveBucketName(site *webv1alpha1.StaticSite) (name string, generated bool, err error) {
+	recorded := site.Status.BucketName
+
+	if site.Spec.Bucket.Name != "" {
+		// A name that has been given cannot disagree with one already in use. The CRD
+		// makes spec.bucket.name immutable, so the only way here is adding a name to a
+		// site that had been using a generated one.
+		if recorded != "" && recorded != site.Spec.Bucket.Name {
+			return "", false, fmt.Errorf(
+				"this StaticSite already publishes to bucket %q, so spec.bucket.name cannot be set to %q; "+
+					"remove the field, or create a new StaticSite for the other bucket",
+				recorded, site.Spec.Bucket.Name)
+		}
+		return site.Spec.Bucket.Name, false, nil
+	}
+
+	if recorded != "" {
+		return recorded, true, nil
+	}
+
+	generatedName, err := d.GenerateBucketName(site)
+	if err != nil {
+		return "", false, err
+	}
+	return generatedName, true, nil
 }
 
 // applyServiceDefaults resolves the ExternalName Service settings.

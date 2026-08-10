@@ -55,6 +55,7 @@ const (
 	ReasonAwaitingBucket     = "AwaitingBucket"
 	ReasonAwaitingResolution = "AwaitingSourceResolution"
 	ReasonOwnershipConflict  = "BucketOwnershipConflict"
+	ReasonBucketNameChanged  = "BucketNameChanged"
 )
 
 // Annotations recognised on a StaticSite.
@@ -252,15 +253,24 @@ type WebsiteSpec struct {
 
 // BucketSpec describes the S3 bucket that hosts the site.
 type BucketSpec struct {
-	// name is the S3 bucket name. It is immutable: to move a site to a different
-	// bucket, create a new StaticSite. Bucket names are global per provider, so
-	// pick something unlikely to collide.
-	// +required
+	// name is the S3 bucket name.
+	//
+	// Leave it out and the operator generates one from this resource's namespace
+	// and name, through the operator's --default-bucket-name-template
+	// ("{{.Namespace}}-{{.Name}}" out of the box). Bucket names are global per
+	// provider, so a cluster sharing a provider with others should give that
+	// template a prefix of its own.
+	//
+	// Whether given or generated, the name is fixed for the life of the resource:
+	// it is recorded in status.bucketName and reused from there, so changing the
+	// cluster's template later does not move an existing site to a new bucket. To
+	// publish to a different bucket, create a new StaticSite.
+	// +optional
 	// +kubebuilder:validation:MinLength=3
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="bucket.name is immutable"
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 
 	// region is the S3 region the bucket lives in. Defaults to the operator's
 	// --default-region.
@@ -591,9 +601,11 @@ type StaticSiteSpec struct {
 	// +required
 	Source SourceSpec `json:"source"`
 
-	// bucket describes the S3 bucket that serves the site.
-	// +required
-	Bucket BucketSpec `json:"bucket"`
+	// bucket describes the S3 bucket that serves the site. Every field in it has a
+	// default, including the bucket name, so it can be left out entirely.
+	// +optional
+	// +kubebuilder:default={}
+	Bucket BucketSpec `json:"bucket,omitzero"`
 
 	// sync tunes how content is copied into the bucket.
 	// +optional

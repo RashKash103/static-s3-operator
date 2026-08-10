@@ -32,17 +32,16 @@ metadata:
 spec:
   source:
     image: ghcr.io/acme/docs:latest
-    path: /usr/share/nginx/html
-  bucket:
-    name: acme-docs
 ```
 
-That is a complete resource. Everything else has a default, and the defaults are
-set once for the cluster in the Helm chart.
+That is a complete resource. The bucket is named `web-docs`, after the namespace
+and the resource; everything else has a default, and the defaults are set once for
+the cluster in the Helm chart.
 
 ## Contents
 
 - [What it does](#what-it-does)
+- [Bucket names](#bucket-names)
 - [Requirements](#requirements)
 - [Install](#install)
 - [Publish your first site](#publish-your-first-site)
@@ -78,6 +77,34 @@ set once for the cluster in the Helm chart.
   Service aliasing the bucket's website hostname, with your hostnames on it.
 - **Works with S3-compatible providers**, not only AWS, and degrades gracefully
   around the parts of the S3 API they do not implement.
+
+## Bucket names
+
+Leave `spec.bucket.name` out and the operator derives it from the resource. With
+the default settings that is **`<namespace>-<name>`**: a `StaticSite` called `docs`
+in namespace `web` publishes to `web-docs`.
+
+The format is fixed and [documented in
+full](docs/configuration.md#how-a-bucket-name-is-generated), so you can work out
+the name yourself — to create the bucket by hand, to scope an IAM policy to it, or
+to find it in a console. Or ask the cluster:
+
+```sh
+kubectl get staticsite docs -n web -o jsonpath='{.status.bucketName}'
+```
+
+Bucket names are global per provider, so if yours is shared with anything else,
+give the template a prefix of your own at install time:
+
+```sh
+--set 'operator.defaults.bucketNameTemplate=acme-{{ .Namespace }}-{{ .Name }}'
+```
+
+Set `spec.bucket.name` explicitly when a site needs a particular bucket — a name
+you already own, or one that has to match a hostname. Either way the name is fixed
+for the life of the resource: it is recorded in `status.bucketName` and reused, so
+changing the cluster's template later never moves an existing site onto a new
+bucket.
 
 ## Requirements
 
@@ -169,6 +196,7 @@ spec:
   source:
     image: ghcr.io/acme/docs:latest
   bucket:
+    # Optional: leave it out for "<namespace>-<name>", so "web-docs" here.
     name: acme-docs
     website:
       indexDocument: index.html
@@ -397,6 +425,7 @@ Complete, commented manifests in [`examples/`](examples/):
 | --- | --- |
 | [`minimal.yaml`](examples/minimal.yaml) | The smallest useful `StaticSite` |
 | [`image-paths.yaml`](examples/image-paths.yaml) | Pointing at the directory a given image keeps the site in |
+| [`generated-bucket-name.yaml`](examples/generated-bucket-name.yaml) | Letting the operator name the bucket, and naming it yourself |
 | [`aws-production.yaml`](examples/aws-production.yaml) | AWS with cache policy, tags and DNS |
 | [`s3-compatible-provider.yaml`](examples/s3-compatible-provider.yaml) | A non-AWS endpoint, path style, per-site credentials |
 | [`spa.yaml`](examples/spa.yaml) | A single page application routed client side |

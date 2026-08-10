@@ -11,6 +11,7 @@ chooses it once, and a site inherits it.
 - [StaticSite](#staticsite)
   - [spec.source](#specsource)
   - [spec.bucket](#specbucket)
+    - [How a bucket name is generated](#how-a-bucket-name-is-generated)
     - [Where the website URL comes from](#where-the-website-url-comes-from)
   - [spec.sync](#specsync)
   - [spec.service](#specservice)
@@ -80,7 +81,7 @@ including two sites published from different subdirectories of one image.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `name` | string | **required, immutable** | Bucket name, 3–63 characters, lowercase. Global per provider. |
+| `name` | string | *generated, immutable* | Bucket name, 3–63 characters, lowercase. Leave it out and the operator derives one from the resource: see [How a bucket name is generated](#how-a-bucket-name-is-generated). |
 | `region` | string | *operator default* (`us-east-1`) | S3 region. |
 | `endpoint` | string | *operator default* (empty = AWS) | S3 **API** endpoint for a compatible provider. Without a scheme, https is assumed. |
 | `websiteEndpointTemplate` | string | *operator default* | Go template for `status.websiteURL`, with `{{.Bucket}}`, `{{.Region}}`, `{{.Endpoint}}`. Also what the `ExternalName` Service points at. See [Where the website URL comes from](#where-the-website-url-comes-from). |
@@ -95,6 +96,82 @@ including two sites published from different subdirectories of one image.
 
 A site whose bucket is not public needs something in front that reads it with its
 own credentials, and should also set `sync.acl: private`.
+
+#### How a bucket name is generated
+
+Leaving `spec.bucket.name` out is the normal case. The operator derives the name
+from the resource, and the format is fixed and documented so that you can work it
+out yourself — to create the bucket by hand, to scope an IAM policy to it, or to
+find it in a provider's console.
+
+**With the default settings, the name is `<namespace>-<name>`.** A `StaticSite`
+called `docs` in namespace `web` publishes to `web-docs`.
+
+The full rule is a Go template, `operator.defaults.bucketNameTemplate`, rendered
+with:
+
+| Field | Value |
+| --- | --- |
+| `{{ .Namespace }}` | the `StaticSite`'s namespace |
+| `{{ .Name }}` | the `StaticSite`'s name |
+| `{{ .UID }}` | the `StaticSite`'s UID |
+
+The rendered string is then made into a legal bucket name, deterministically:
+
+1. Lowercased, and surrounding whitespace removed.
+2. Every character outside `a-z`, `0-9` and `-` is replaced with `-`. Dots are
+   included in that, even though S3 allows them, because a bucket name containing a
+   dot cannot be reached at `bucket.endpoint` over HTTPS — the wildcard certificate
+   does not cover the extra label. A `StaticSite` name may contain dots, so this
+   does come up.
+3. Runs of `-` are collapsed to one, and leading and trailing `-` are removed.
+4. If the result is longer than 63 characters, it is cut to 54 and given `-` plus
+   the first 8 hex characters of the SHA-256 of the rendered string. Two names that
+   differ only past the cut therefore still get different buckets.
+5. If the result looks like an IP address or starts with a prefix S3 reserves
+   (`xn--`, `sthree-`, …), `site-` is prepended. If it ends with a reserved suffix
+   (`-s3alias`, `--ol-s3`, …), `-site` is appended.
+6. If it is shorter than 3 characters, `-` plus the same 8-character digest is
+   appended.
+
+Reproducing it in a shell, for the default template:
+
+```sh
+namespace=web
+name=docs
+
+full="${namespace}-${name}"
+bucket="$(printf '%s' "$full" \
+  | tr '[:upper:]' '[:lower:]' \
+  | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-//; s/-$//')"
+
+if [ "${#bucket}" -gt 63 ]; then
+  digest="$(printf '%s' "$full" | sha256sum | cut -c1-8)"
+  bucket="$(printf '%s' "${bucket:0:54}" | sed -E 's/-$//')-${digest}"
+fi
+
+echo "$bucket"     # web-docs
+```
+
+Or just ask the cluster after the fact:
+
+```sh
+kubectl get staticsite docs -n web -o jsonpath='{.status.bucketName}'
+```
+
+Two things worth knowing:
+
+- **Bucket names are global per provider.** `web-docs` is a name somebody else may
+  well have taken. If the provider is shared, give the template a prefix of your
+  own: `bucketNameTemplate: "acme-{{ .Namespace }}-{{ .Name }}"`.
+- **The name is sticky.** Whatever a site resolves to is recorded in
+  `status.bucketName` and reused from then on, so changing the cluster's template
+  later does not move existing sites onto new buckets and orphan the old ones. It
+  only affects sites created afterwards.
+
+Adding `spec.bucket.name` to a site that already publishes to a generated bucket is
+refused, with the name it is using, rather than silently orphaning that bucket. To
+publish to a different bucket, create a new `StaticSite`.
 
 #### Where the website URL comes from
 
@@ -239,6 +316,7 @@ Fill in the `StaticSite` fields a site leaves unset.
 | --- | --- | --- |
 | `sourcePath` | `/usr/share/nginx/html` | `spec.source.path` |
 | `pullInterval` | `24h` | `spec.source.pullInterval` |
+| `bucketNameTemplate` | `{{ .Namespace }}-{{ .Name }}` | `spec.bucket.name`; see [above](#how-a-bucket-name-is-generated) |
 | `region` | `us-east-1` | `spec.bucket.region` |
 | `endpoint` | `""` (AWS) | `spec.bucket.endpoint` |
 | `forcePathStyle` | `false` | `spec.bucket.forcePathStyle` |
@@ -304,6 +382,7 @@ The chart renders these; they are listed for a hand-written Deployment or for
 ```
 --default-source-path
 --default-pull-interval
+--default-bucket-name-template
 --default-region
 --default-endpoint
 --default-force-path-style

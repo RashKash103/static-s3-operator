@@ -257,6 +257,33 @@ var _ = Describe("StaticSite Controller", func() {
 			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
 		})
 
+		It("derives the bucket name from the namespace and name when none is given", func() {
+			// The documented default: <namespace>-<name>, so somebody can create the
+			// bucket by hand or scope a policy to it without asking the cluster.
+			site := newSite()
+			site.Spec.Bucket.Name = ""
+			create(site)
+
+			expected := namespace + "-" + siteName
+			Eventually(func() string {
+				return fetch().Status.BucketName
+			}, eventuallyTimeout, eventuallyPoll).Should(Equal(expected))
+
+			Eventually(func() bool {
+				return fakeS3.exists(expected)
+			}, eventuallyTimeout, eventuallyPoll).Should(BeTrue(),
+				"the operator should create the bucket it derived")
+
+			By("keeping that bucket even if the cluster template changes later")
+			defaults.BucketNameTemplate = "renamed-{{.Namespace}}-{{.Name}}"
+			_, err := kubectlFreeAnnotate(fetch())
+			Expect(err).NotTo(HaveOccurred())
+
+			Consistently(func() string {
+				return fetch().Status.BucketName
+			}, 3*time.Second, 500*time.Millisecond).Should(Equal(expected))
+		})
+
 		It("builds a sync Job that is unprivileged and has no API access", func() {
 			create(newSite())
 			job := waitForJob(testDigest)
@@ -717,6 +744,16 @@ var _ = Describe("StaticSite Controller", func() {
 		})
 	})
 })
+
+// kubectlFreeAnnotate nudges a StaticSite so a reconcile runs, which is how a spec
+// checks behaviour that only shows up on the next pass.
+func kubectlFreeAnnotate(site *webv1alpha1.StaticSite) (*webv1alpha1.StaticSite, error) {
+	if site.Annotations == nil {
+		site.Annotations = map[string]string{}
+	}
+	site.Annotations["test.rka.sh/nudge"] = time.Now().Format(time.RFC3339Nano)
+	return site, k8sClient.Update(ctx, site)
+}
 
 func findCondition(site *webv1alpha1.StaticSite, conditionType string) *metav1.Condition {
 	for i := range site.Status.Conditions {
