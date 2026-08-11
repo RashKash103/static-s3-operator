@@ -192,6 +192,35 @@
               "maxLength": 63,
               "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
               "type": "string"
+            },
+            "ports": {
+              "description": "ports are the ports declared on the Service.\n\nNothing routes through an ExternalName Service -- it resolves to a CNAME and\nkube-proxy is not involved -- so these are declarative. They matter to\nanything that references the Service as a backend and has to name a port: an\nIngress `service.port.name`, a Gateway API backendRef, a service mesh.\n\nLeft unset, the operator's --default-service-ports applies, which is\n\"https:443,http:80\". Set it to an empty list for a Service with no ports,\nwhich is what this produced before v0.4.0.",
+              "items": {
+                "description": "ServicePort is a port declared on the site's Service.",
+                "properties": {
+                  "name": {
+                    "description": "name names the port, so an Ingress or HTTPRoute can select it by name\ninstead of by number. Must be a valid IANA service name: lowercase\nalphanumerics and hyphens, at most 15 characters.",
+                    "maxLength": 15,
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                    "type": "string"
+                  },
+                  "port": {
+                    "description": "port is the port number.",
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name",
+                  "port"
+                ],
+                "type": "object"
+              },
+              "maxItems": 8,
+              "type": "array"
             }
           },
           "type": "object"

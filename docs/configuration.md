@@ -371,9 +371,39 @@ external-dns publishes DNS for the site.
 | `hostnames` | list | none | Rendered into the external-dns hostname annotation. |
 | `annotations` | map | none | Merged onto the Service, overriding generated annotations. |
 | `labels` | map | none | Merged onto the Service. |
+| `ports` | list of `{name, port}` | *operator default* (`https:443`, `http:80`) | Ports declared on the Service. `[]` for none. |
 
 A Service can only point at a hostname, never at a path, so a path-style website
 URL cannot be expressed as a CNAME alone.
+
+#### Why an ExternalName Service has ports
+
+Nothing routes through one. It resolves to a CNAME, kube-proxy is not involved, and
+DNS ignores the ports entirely — so they change nothing about how the site is
+reached. They exist because anything referencing the Service as a *backend* has to
+name a port:
+
+```yaml
+# an Ingress in front of the site
+backend:
+  service:
+    name: docs
+    port:
+      name: https        # <- this
+```
+
+The same applies to a Gateway API `backendRef` and to service meshes. Named ports
+mean those references do not have to hardcode 443.
+
+Leaving `ports` unset takes the cluster default, `--default-service-ports`. An
+explicitly empty list is different — it declares a Service with no ports, which is
+what this produced before v0.4.0:
+
+```yaml
+spec:
+  service:
+    ports: []
+```
 
 ### spec.suspend
 
@@ -476,6 +506,7 @@ than silently preferring one.
 | `s3.requestChecksumWhenSupported` | `false` | Trailing CRC32 checksums on every upload. Off because several compatible providers reject them. |
 | `s3.skipTLSVerify` | `false` | Development only. |
 | `externalDNS.hostnameAnnotation` | `external-dns.alpha.kubernetes.io/hostname` | Where `spec.service.hostnames` are rendered. `""` renders nothing. |
+| `servicePorts` | `https:443`, `http:80` | `spec.service.ports`. `[]` declares Services with no ports. |
 
 ### metrics, prometheus and certManager
 
@@ -558,6 +589,7 @@ The chart renders these; they are listed for a hand-written Deployment or for
 --default-cache-control
 
 --external-dns-hostname-annotation
+--default-service-ports
 
 --syncer-image
 --syncer-image-pull-policy

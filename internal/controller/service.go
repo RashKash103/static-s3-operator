@@ -98,7 +98,7 @@ func (r *StaticSiteReconciler) reconcileService(
 		// An ExternalName Service resolves by DNS alone; a selector would make the
 		// API server try to manage endpoints for it.
 		service.Spec.Selector = nil
-		service.Spec.Ports = nil
+		service.Spec.Ports = servicePorts(effective.ServicePorts)
 
 		return controllerutil.SetControllerReference(site, service, r.Scheme)
 	})
@@ -112,6 +112,32 @@ func (r *StaticSiteReconciler) reconcileService(
 
 	site.Status.ServiceName = service.Name
 	return nil
+}
+
+// servicePorts converts the resolved ports into Service ports.
+//
+// Nothing routes through an ExternalName Service, so these carry no targetPort:
+// the API server defaults it to the port number and there is no pod behind it for
+// a different value to mean anything. They exist to be named by an Ingress
+// backend, a Gateway API backendRef or a mesh.
+//
+// nil, not an empty slice, when there are none: writing an empty slice would have
+// CreateOrUpdate see a change on every reconcile against a Service the API server
+// stores with the field absent.
+func servicePorts(ports []webv1alpha1.ServicePort) []corev1.ServicePort {
+	if len(ports) == 0 {
+		return nil
+	}
+
+	converted := make([]corev1.ServicePort, 0, len(ports))
+	for _, port := range ports {
+		converted = append(converted, corev1.ServicePort{
+			Name:     port.Name,
+			Port:     port.Port,
+			Protocol: corev1.ProtocolTCP,
+		})
+	}
+	return converted
 }
 
 // deleteService removes a Service the operator owns. It ignores a Service that

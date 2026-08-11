@@ -411,6 +411,49 @@ var _ = Describe("StaticSite Controller", func() {
 			}, eventuallyTimeout, eventuallyPoll).Should(Equal(siteName))
 		})
 
+		It("declares the default named ports", func() {
+			create(newSite())
+
+			service := &corev1.Service{}
+			key := types.NamespacedName{Name: siteName, Namespace: namespace}
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, key, service)).To(Succeed())
+				g.Expect(service.Spec.Ports).To(HaveLen(2))
+			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
+
+			// Named, because an Ingress or HTTPRoute selects a backend port by name.
+			Expect(service.Spec.Ports[0].Name).To(Equal("https"))
+			Expect(service.Spec.Ports[0].Port).To(Equal(int32(443)))
+			Expect(service.Spec.Ports[1].Name).To(Equal("http"))
+			Expect(service.Spec.Ports[1].Port).To(Equal(int32(80)))
+		})
+
+		It("uses the ports a site asks for, and none when it asks for none", func() {
+			create(newSite(func(s *webv1alpha1.StaticSite) {
+				s.Spec.Service.Ports = &[]webv1alpha1.ServicePort{{Name: "web", Port: 8080}}
+			}))
+
+			service := &corev1.Service{}
+			key := types.NamespacedName{Name: siteName, Namespace: namespace}
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, key, service)).To(Succeed())
+				g.Expect(service.Spec.Ports).To(HaveLen(1))
+			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
+			Expect(service.Spec.Ports[0].Name).To(Equal("web"))
+			Expect(service.Spec.Ports[0].Port).To(Equal(int32(8080)))
+
+			// An explicitly empty list is not the same as an absent one: it means a
+			// Service with no ports, which is what this produced before.
+			site := fetch()
+			site.Spec.Service.Ports = &[]webv1alpha1.ServicePort{}
+			Expect(k8sClient.Update(ctx, site)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, key, service)).To(Succeed())
+				g.Expect(service.Spec.Ports).To(BeEmpty())
+			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
+		})
+
 		It("renders hostnames into the external-dns annotation", func() {
 			create(newSite(func(s *webv1alpha1.StaticSite) {
 				s.Spec.Service.Hostnames = []string{"docs.example.com", "www.example.com"}

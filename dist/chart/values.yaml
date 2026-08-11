@@ -243,6 +243,22 @@ operator:
     ##
     cacheControl: ""
 
+    ## Ports declared on each site's ExternalName Service, used when a StaticSite
+    ## omits spec.service.ports.
+    ##
+    ## Nothing routes through an ExternalName Service -- it resolves to a CNAME and
+    ## kube-proxy is not involved -- so these are declarative. They matter to
+    ## whatever references the Service as a backend and has to name a port: an
+    ## Ingress `service.port.name`, a Gateway API backendRef, a service mesh.
+    ##
+    ## Set it to [] for Services with no ports.
+    ##
+    servicePorts:
+      - name: https
+        port: 443
+      - name: http
+        port: 80
+
   ## The ExternalName Service the operator maintains for each site.
   ##
   externalDNS:

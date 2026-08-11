@@ -72,6 +72,34 @@
             "cacheControl": {
               "type": "string",
               "description": "Cache-Control header for objects matched by no spec.sync.cacheControl rule. Empty sends no header."
+            },
+            "servicePorts": {
+              "type": "array",
+              "description": "Ports declared on each site's ExternalName Service, used when a StaticSite omits spec.service.ports. Nothing routes through such a Service, so these are declarative: they matter to whatever references it as a backend and has to name a port, such as an Ingress service.port.name or a Gateway API backendRef. An empty list declares no ports.",
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "port"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 15,
+                    "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                    "description": "IANA service name, selectable by an Ingress or HTTPRoute."
+                  },
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Port number."
+                  }
+                }
+              }
             }
           }
         },

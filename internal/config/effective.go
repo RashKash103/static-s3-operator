@@ -81,6 +81,7 @@ type Effective struct {
 	ServiceExternalName string
 	ServiceAnnotations  map[string]string
 	ServiceLabels       map[string]string
+	ServicePorts        []webv1alpha1.ServicePort
 }
 
 // Effective resolves site against the operator defaults. It returns an error
@@ -209,6 +210,14 @@ func (d *Defaults) applyServiceDefaults(site *webv1alpha1.StaticSite, e *Effecti
 	e.ServiceEnabled = boolValue(service.Enabled, true)
 	e.ServiceName = firstNonEmpty(service.Name, site.Name)
 	e.ServiceLabels = service.Labels
+
+	// A nil Ports takes the cluster default; an explicitly empty one means a
+	// Service with no ports, so the two cannot be collapsed.
+	if service.Ports != nil {
+		e.ServicePorts = *service.Ports
+	} else {
+		e.ServicePorts = d.ServicePorts
+	}
 
 	e.ServiceExternalName = service.ExternalName
 	if e.ServiceExternalName == "" {

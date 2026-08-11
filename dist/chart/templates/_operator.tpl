@@ -59,6 +59,16 @@ default stays in effect for anything the chart leaves empty.
 {{- if hasKey $externalDNS "hostnameAnnotation" }}
 - {{ printf "--external-dns-hostname-annotation=%s" ($externalDNS.hostnameAnnotation | toString) | quote }}
 {{- end }}
+{{- /* A list of {name, port} in values, one name:port flag on the command line. An
+     explicitly empty list means "a Service with no ports", which differs from
+     leaving the key out, so the key's presence is what decides. */ -}}
+{{- if hasKey $defaults "servicePorts" }}
+{{- $pairs := list }}
+{{- range $defaults.servicePorts }}
+{{- $pairs = append $pairs (printf "%s:%v" .name .port) }}
+{{- end }}
+- {{ printf "--default-service-ports=%s" (join "," $pairs) | quote }}
+{{- end }}
 
 {{- /* Sync Jobs. Leaving syncer.image empty is the recommended setting: the
      operator then reads its own Pod and reuses its own image, so the manager and

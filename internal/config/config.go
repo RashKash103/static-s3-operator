@@ -25,18 +25,32 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
 
 	"github.com/google/uuid"
+
+	webv1alpha1 "github.com/rashkash103/static-s3-operator/api/v1alpha1"
 )
 
 // Built-in defaults that appear in more than one place.
 const (
 	defaultRegion        = "us-east-1"
 	defaultIndexDocument = "index.html"
+
+	// The two port names a static site is reached on.
+	portNameHTTPS = "https"
+	portNameHTTP  = "http"
 )
+
+// defaultServicePorts is what --default-service-ports parses to when it is left
+// alone: the two ports a static site is actually reached on.
+var defaultServicePorts = []webv1alpha1.ServicePort{
+	{Name: portNameHTTPS, Port: 443},
+	{Name: portNameHTTP, Port: 80},
+}
 
 // Defaults are the operator-wide settings.
 type Defaults struct {
@@ -72,6 +86,11 @@ type Defaults struct {
 	// hostnames are rendered into. It matches external-dns by default, and can be
 	// pointed at another controller's key or emptied to render nothing.
 	ExternalDNSHostnameAnnotation string
+
+	// ServicePorts fills in spec.service.ports. Nothing routes through an
+	// ExternalName Service, so these exist for whatever references it as a backend
+	// and has to name a port. Empty declares a Service with no ports.
+	ServicePorts []webv1alpha1.ServicePort
 
 	// SyncerImage is the image used for sync Jobs. It defaults to the operator's
 	// own image, which ships the syncer binary, and is normally set by the Helm
@@ -139,6 +158,7 @@ func New() *Defaults {
 		ErrorDocument:      "404.html",
 
 		ExternalDNSHostnameAnnotation: "external-dns.alpha.kubernetes.io/hostname",
+		ServicePorts:                  slices.Clone(defaultServicePorts),
 
 		SyncerImagePullPolicy:    "IfNotPresent",
 		CredentialsSecret:        "static-s3-operator-s3-credentials",
@@ -194,6 +214,11 @@ func (d *Defaults) BindFlags(fs *flag.FlagSet) {
 		d.ExternalDNSHostnameAnnotation,
 		"Annotation key that spec.service.hostnames are rendered into on the generated "+
 			"ExternalName Service. Empty renders no hostname annotation.")
+	fs.Var(servicePortsValue{&d.ServicePorts}, "default-service-ports",
+		"Ports declared on the generated ExternalName Service, as name:port pairs, when a "+
+			"StaticSite omits spec.service.ports. Nothing routes through such a Service, so "+
+			"these are for whatever references it as a backend and must name a port. Empty "+
+			"declares no ports.")
 
 	fs.StringVar(&d.SyncerImage, "syncer-image", d.SyncerImage,
 		"Image for sync Jobs. Defaults to the operator's own image, which ships the syncer binary.")

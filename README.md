@@ -377,6 +377,24 @@ resolves to the endpoint and something in front has to add the bucket prefix. Se
 `spec.bucket.websiteEndpointTemplate` if your provider has a per-bucket website
 hostname.
 
+The Service also declares named ports — `https` on 443 and `http` on 80 — so
+anything putting itself in front of the site can select one by name rather than by
+number:
+
+```yaml
+backend:
+  service:
+    name: docs
+    port:
+      name: https
+```
+
+Nothing routes through an `ExternalName` Service, so those ports change nothing
+about how the site is reached; they exist for Ingress backends, Gateway API
+`backendRef`s and meshes, which have to name a port. Change them per site with
+`spec.service.ports`, cluster-wide with `operator.defaults.servicePorts`, or set
+either to `[]` for none.
+
 Set `spec.service.enabled: false` for a site reached only through a CDN you
 configure elsewhere.
 

@@ -328,6 +328,42 @@ spec:
                     maxLength: 63
                     pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
+                  ports:
+                    description: |-
+                      ports are the ports declared on the Service.
+
+                      Nothing routes through an ExternalName Service -- it resolves to a CNAME and
+                      kube-proxy is not involved -- so these are declarative. They matter to
+                      anything that references the Service as a backend and has to name a port: an
+                      Ingress `service.port.name`, a Gateway API backendRef, a service mesh.
+
+                      Left unset, the operator's --default-service-ports applies, which is
+                      "https:443,http:80". Set it to an empty list for a Service with no ports,
+                      which is what this produced before v0.4.0.
+                    items:
+                      description: ServicePort is a port declared on the site's Service.
+                      properties:
+                        name:
+                          description: |-
+                            name names the port, so an Ingress or HTTPRoute can select it by name
+                            instead of by number. Must be a valid IANA service name: lowercase
+                            alphanumerics and hyphens, at most 15 characters.
+                          maxLength: 15
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        port:
+                          description: port is the port number.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                      required:
+                      - name
+                      - port
+                      type: object
+                    maxItems: 8
+                    type: array
                 type: object
               source:
                 description: source describes the container image holding the built

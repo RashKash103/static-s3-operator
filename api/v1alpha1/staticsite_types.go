@@ -607,6 +607,36 @@ type ServiceSpec struct {
 	// labels are merged onto the Service.
 	// +optional
 	Labels map[string]string `json:"labels,omitempty"`
+
+	// ports are the ports declared on the Service.
+	//
+	// Nothing routes through an ExternalName Service -- it resolves to a CNAME and
+	// kube-proxy is not involved -- so these are declarative. They matter to
+	// anything that references the Service as a backend and has to name a port: an
+	// Ingress `service.port.name`, a Gateway API backendRef, a service mesh.
+	//
+	// Left unset, the operator's --default-service-ports applies, which is
+	// "https:443,http:80". Set it to an empty list for a Service with no ports,
+	// which is what this produced before v0.4.0.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	Ports *[]ServicePort `json:"ports,omitempty"`
+}
+
+// ServicePort is a port declared on the site's Service.
+type ServicePort struct {
+	// name names the port, so an Ingress or HTTPRoute can select it by name
+	// instead of by number. Must be a valid IANA service name: lowercase
+	// alphanumerics and hyphens, at most 15 characters.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// port is the port number.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
 }
 
 // StaticSiteSpec defines the desired state of StaticSite.
