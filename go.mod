@@ -10,8 +10,8 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-containerregistry v0.21.9
 	github.com/google/uuid v1.6.0
-	github.com/onsi/ginkgo/v2 v2.32.0
-	github.com/onsi/gomega v1.40.0
+	github.com/onsi/ginkgo/v2 v2.32.1
+	github.com/onsi/gomega v1.42.1
 	golang.org/x/sync v0.22.0
 	k8s.io/api v0.36.3
 	k8s.io/apiextensions-apiserver v0.36.3
