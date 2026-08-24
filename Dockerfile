@@ -9,7 +9,7 @@
 # twenty-five minutes to build that way. Go cross-compiles natively, and the
 # TARGETOS/TARGETARCH arguments below are exactly what it needs to, so the
 # emulation buys nothing.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27 AS builder
 ARG BUILDPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
