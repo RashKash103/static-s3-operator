@@ -101,7 +101,7 @@ func httpGet(url string) (string, int, http.Header, error) {
 // objectURL is the address a visitor would use for one object in a path-style
 // bucket.
 func objectURL(bucket, key string) string {
-	return fmt.Sprintf("%s/%s/%s", localMinIO, bucket, key)
+	return fmt.Sprintf("%s/%s/%s", localObjectStore, bucket, key)
 }
 
 // s3Client talks to the forwarded object store with the same client the operator
@@ -110,11 +110,11 @@ func objectURL(bucket, key string) string {
 func s3Client() *awss3.Client {
 	client, err := operators3.NewClient(operators3.ClientOptions{
 		Region:         "us-east-1",
-		Endpoint:       localMinIO,
+		Endpoint:       localObjectStore,
 		ForcePathStyle: true,
 		Credentials: operators3.Credentials{
-			AccessKeyID:     minioAccessKey,
-			SecretAccessKey: minioSecretKey,
+			AccessKeyID:     objectStoreAccessKey,
+			SecretAccessKey: objectStoreSecretKey,
 		},
 		MaxRetries: 3,
 	})

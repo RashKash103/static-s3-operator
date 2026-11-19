@@ -82,49 +82,56 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # The integration tests talk to a real S3 API rather than a mock, because what
-# they check is how a provider behaves. MINIO_IMAGE is a local, S3-compatible
+# they check is how a provider behaves. S3_SERVER_IMAGE is a local, S3-compatible
 # server started in Docker for the duration of the run; point S3_TEST_ENDPOINT at
 # something else to run them against another provider.
-MINIO_IMAGE ?= quay.io/minio/minio:latest
-MINIO_CONTAINER ?= static-s3-operator-test-minio
-MINIO_PORT ?= 9100
-MINIO_ACCESS_KEY ?= minioadmin
-MINIO_SECRET_KEY ?= minioadmin
+#
+# RustFS, because it implements the parts of the API the operator leans on most:
+# bucket policies, anonymous reads through them, and tagging. Garage, the obvious
+# alternative, implements none of those, so half of what these tests exist to
+# check would be skipped (docs/credentials.md has the details). The image is
+# pinned: a floating tag is how this target broke before, when the image it named
+# stopped being publicly pullable.
+S3_SERVER_IMAGE ?= rustfs/rustfs:1.0.6
+S3_SERVER_CONTAINER ?= static-s3-operator-test-s3
+S3_SERVER_PORT ?= 9100
+S3_SERVER_ACCESS_KEY ?= rustfsadmin
+S3_SERVER_SECRET_KEY ?= rustfsadmin
 
 .PHONY: test-integration
 test-integration: manifests generate fmt vet ## Run integration tests against a local S3 server started in Docker.
-	@$(MAKE) --no-print-directory start-minio
-	@set -e; trap '$(MAKE) --no-print-directory stop-minio' EXIT; \
-		S3_TEST_ENDPOINT=http://127.0.0.1:$(MINIO_PORT) \
-		S3_TEST_ACCESS_KEY=$(MINIO_ACCESS_KEY) \
-		S3_TEST_SECRET_KEY=$(MINIO_SECRET_KEY) \
+	@$(MAKE) --no-print-directory start-s3-server
+	@set -e; trap '$(MAKE) --no-print-directory stop-s3-server' EXIT; \
+		S3_TEST_ENDPOINT=http://127.0.0.1:$(S3_SERVER_PORT) \
+		S3_TEST_ACCESS_KEY=$(S3_SERVER_ACCESS_KEY) \
+		S3_TEST_SECRET_KEY=$(S3_SERVER_SECRET_KEY) \
 		go test -tags=integration -count=1 ./internal/s3/... ./internal/syncer/...
 
-.PHONY: start-minio
-start-minio: ## Start a local S3 server for the integration tests.
-	@if [ -n "$$(docker ps -aq -f name=^$(MINIO_CONTAINER)$$)" ]; then \
-		docker rm -f $(MINIO_CONTAINER) >/dev/null; \
+.PHONY: start-s3-server
+start-s3-server: ## Start a local S3 server for the integration tests.
+	@if [ -n "$$(docker ps -aq -f name=^$(S3_SERVER_CONTAINER)$$)" ]; then \
+		docker rm -f $(S3_SERVER_CONTAINER) >/dev/null; \
 	fi
-	@echo "Starting a local S3 server on port $(MINIO_PORT)..."
-	@docker run -d --rm --name $(MINIO_CONTAINER) \
-		-p $(MINIO_PORT):9000 \
-		-e MINIO_ROOT_USER=$(MINIO_ACCESS_KEY) \
-		-e MINIO_ROOT_PASSWORD=$(MINIO_SECRET_KEY) \
-		$(MINIO_IMAGE) server /data >/dev/null
+	@echo "Starting a local S3 server on port $(S3_SERVER_PORT)..."
+	@docker run -d --rm --name $(S3_SERVER_CONTAINER) \
+		-p $(S3_SERVER_PORT):9000 \
+		-e RUSTFS_ACCESS_KEY=$(S3_SERVER_ACCESS_KEY) \
+		-e RUSTFS_SECRET_KEY=$(S3_SERVER_SECRET_KEY) \
+		$(S3_SERVER_IMAGE) /data >/dev/null
 	@echo "Waiting for the S3 server to become ready..."
 	@for i in $$(seq 1 60); do \
-		if curl -fsS "http://127.0.0.1:$(MINIO_PORT)/minio/health/live" >/dev/null 2>&1; then \
+		if curl -fsS "http://127.0.0.1:$(S3_SERVER_PORT)/health" >/dev/null 2>&1; then \
 			echo "S3 server is ready."; exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
 	echo "The S3 server did not become ready in time; logs follow:"; \
-	docker logs $(MINIO_CONTAINER) || true; \
+	docker logs $(S3_SERVER_CONTAINER) || true; \
 	exit 1
 
-.PHONY: stop-minio
-stop-minio: ## Stop the local S3 server.
-	@docker rm -f $(MINIO_CONTAINER) >/dev/null 2>&1 || true
+.PHONY: stop-s3-server
+stop-s3-server: ## Stop the local S3 server.
+	@docker rm -f $(S3_SERVER_CONTAINER) >/dev/null 2>&1 || true
 
 .PHONY: schemas
 schemas: manifests ## Generate standalone JSON Schemas for the CRDs, for editor completion and validation.

@@ -200,7 +200,7 @@ spec:
 		externalName, err := kubectl("get", "service", siteName, "-n", e2eNamespace,
 			"-o", "jsonpath={.spec.externalName}")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(externalName).To(Equal("minio." + e2eNamespace + ".svc.cluster.local"))
+		Expect(externalName).To(Equal("objectstore." + e2eNamespace + ".svc.cluster.local"))
 
 		By("rendering the hostnames into the external-dns annotation")
 		annotation, err := kubectl("get", "service", siteName, "-n", e2eNamespace,

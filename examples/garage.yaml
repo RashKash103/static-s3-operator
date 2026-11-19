@@ -1,0 +1,44 @@
+# A site on Garage, which the operator supports only partially.
+#
+# Garage implements no bucket policies, so the default public-read policy cannot
+# be applied, and it serves anonymous requests only from its website endpoint.
+# A bucket created through the S3 API is not reachable there either, so an
+# administrator creates the bucket and this site adopts it:
+#
+#   garage bucket create acme-docs
+#   garage bucket website --allow acme-docs
+#   garage bucket allow --read --write --owner acme-docs --key static-s3-operator
+#
+# The details, and what each setting below works around, are in
+# docs/credentials.md under "Garage".
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rashkash103/static-s3-operator/main/dist/schemas/staticsite-v1alpha1.json
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:latest
+
+  bucket:
+    name: acme-docs
+    # The S3 API, [s3_api] in garage.toml.
+    endpoint: http://garage.storage.svc:3900
+    # Must equal s3_region in garage.toml, or every request fails its signature.
+    region: garage
+    forcePathStyle: true
+    # The site is served by [s3_web], which picks the bucket from the Host header:
+    # with root_domain ".web.garage.example.com", this bucket is
+    # acme-docs.web.garage.example.com.
+    websiteEndpointTemplate: "http://{{ .Bucket }}.web.garage.example.com"
+    # Adopt the bucket the administrator created. An adopted bucket is never
+    # deleted with this StaticSite.
+    create: false
+    # Garage answers PutBucketPolicy with 501 NotImplemented. Website access,
+    # enabled above, is what makes the site public instead.
+    publicRead: false
+
+  sync:
+    # Garage ignores object ACLs, so there is no point asking for one.
+    acl: private

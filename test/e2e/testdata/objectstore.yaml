@@ -1,0 +1,92 @@
+# A local, S3-compatible object store for the end-to-end tests.
+#
+# The suite runs against a real S3 API rather than a stub, because what the tests
+# are checking is that a browser can fetch the site afterwards. That needs a
+# server that honours a public-read bucket policy for anonymous requests, which is
+# why this is RustFS rather than Garage: Garage implements no bucket policies (see
+# docs/credentials.md). The Service is named for its role, not its software, so
+# swapping the server again touches only this file and the constants in
+# e2e_suite_test.go.
+#
+# The image is pinned. A floating tag is how this suite broke before: the image it
+# pointed at stopped being publicly pullable, and nothing in this repository changed.
+#
+# Credentials are fixed on purpose: this only ever runs in a throwaway cluster.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: objectstore-credentials
+  namespace: static-s3-e2e
+type: Opaque
+stringData:
+  accessKeyID: rustfsadmin
+  secretAccessKey: rustfsadmin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: objectstore
+  namespace: static-s3-e2e
+  labels:
+    app: objectstore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: objectstore
+  template:
+    metadata:
+      labels:
+        app: objectstore
+    spec:
+      securityContext:
+        # The image runs as this user, and the emptyDir below has to be writable by it.
+        fsGroup: 10001
+      containers:
+        - name: rustfs
+          image: rustfs/rustfs:1.0.6
+          args: ["/data"]
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              value: rustfsadmin
+            - name: RUSTFS_SECRET_KEY
+              value: rustfsadmin
+          ports:
+            - containerPort: 9000
+              name: s3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        # Ephemeral on purpose: every run starts from an empty object store.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: objectstore
+  namespace: static-s3-e2e
+spec:
+  selector:
+    app: objectstore
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000

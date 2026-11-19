@@ -12,6 +12,8 @@ exactly that policy, for AWS and for S3-compatible providers.
 - [Giving the key to the operator](#giving-the-key-to-the-operator)
 - [AWS](#aws)
 - [S3-compatible providers](#s3-compatible-providers)
+  - [Which providers are tested](#which-providers-are-tested)
+  - [Garage](#garage)
 - [Per-site credentials](#per-site-credentials)
 - [Rotating the key](#rotating-the-key)
 - [Reducing what the key can do](#reducing-what-the-key-can-do)
@@ -272,6 +274,12 @@ missing any of them still works:
 | Object ACLs | The first upload is refused, the operator drops the ACL and continues. Set `spec.sync.acl: private` to skip the attempt. |
 | Bucket versioning | Emptying a bucket removes current objects only, which is all there is. |
 
+**Bucket policies are the exception.** They are how `publicRead` makes a site
+readable, so a provider without them fails `BucketConfigurationFailed` with
+`NotImplemented` on `PutBucketPolicy`. Set `spec.bucket.publicRead: false` there,
+and make the bucket public the provider's own way. [Garage](#garage) is the
+common case, and has a worked setup below.
+
 ### Trailing checksums
 
 The AWS SDK's newer default is to attach a trailing CRC32 checksum to every
@@ -284,6 +292,85 @@ operator:
   s3:
     requestChecksumWhenSupported: true
 ```
+
+### Which providers are tested
+
+The integration and end-to-end suites run against
+[RustFS](https://github.com/rustfs/rustfs), pinned in the `Makefile` and in
+`test/e2e/testdata/objectstore.yaml`. RustFS implements everything the operator
+uses, so no test is skipped there. To check another provider, point the
+integration suite at it:
+
+```sh
+S3_TEST_ENDPOINT=https://s3.example.com S3_TEST_ACCESS_KEY=... S3_TEST_SECRET_KEY=... \
+  go test -tags=integration -count=1 ./internal/s3/... ./internal/syncer/...
+```
+
+Tests for a feature the provider lacks are skipped with a message saying which.
+
+### Garage
+
+[Garage](https://garagehq.deuxfleurs.fr) is **partially supported**. It can serve
+a site, but not with the defaults, and only through a bucket an administrator
+creates. This was measured against Garage v2.5.0.
+
+| Operator feature | On Garage |
+| --- | --- |
+| Creating, listing, emptying and deleting buckets | Works |
+| Uploading, diffing and deleting objects | Works. The object ACL header is accepted and ignored. |
+| Website configuration (`PutBucketWebsite`) | Works. Index documents, the `/dir` → `/dir/` redirect and a custom error document all behave. |
+| **Public read (`spec.bucket.publicRead`, the default)** | **Not supported.** Garage implements no bucket policies, and `PutBucketPolicy` fails with `501 NotImplemented`. A site left at the default is stuck at `BucketConfigurationFailed`. |
+| **Custom `spec.bucket.policy`** | **Not supported**, for the same reason. |
+| Anonymous reads on the S3 API | Never. Garage serves anonymous requests only from its separate website endpoint (`[s3_web]`, port 3902 by default), which chooses the bucket by `Host` header. |
+| **Buckets the operator creates** | **Not reachable as a website.** Garage gives a bucket created through the S3 API only a local alias, private to the key that created it, and its website endpoint looks buckets up by global alias. An administrator has to add one (`garage bucket alias --global`) before the site can be served. |
+| Bucket tagging | Not supported. Ownership is recorded in the [marker object](#what-compatible-providers-often-do-not-implement) instead. |
+| Public access blocks, versioning | Not supported, and not needed. |
+
+**What works** is to let Garage make the bucket public through its website
+endpoint, and have the operator adopt a bucket an administrator created:
+
+```sh
+# On the Garage side, once per site.
+garage bucket create acme-docs                 # created by the CLI, so it has a global alias
+garage bucket website --allow acme-docs
+garage key create static-s3-operator           # or reuse an existing key
+garage bucket allow --read --write --owner acme-docs --key static-s3-operator
+```
+
+`--owner` is needed, because configuring the website is an owner operation.
+
+```yaml
+apiVersion: web.rka.sh/v1alpha1
+kind: StaticSite
+metadata:
+  name: docs
+  namespace: web
+spec:
+  source:
+    image: ghcr.io/acme/docs:latest
+  bucket:
+    name: acme-docs
+    endpoint: http://garage.storage.svc:3900
+    region: garage                             # Garage's s3_region
+    forcePathStyle: true
+    # Garage publishes the site from [s3_web], not from the S3 API.
+    websiteEndpointTemplate: "http://{{ .Bucket }}.web.garage.example.com"
+    create: false                              # adopt the bucket made above
+    publicRead: false                          # Garage has no bucket policies
+  sync:
+    acl: private                               # Garage ignores ACLs; skip asking
+```
+
+The same file is in [`examples/garage.yaml`](../examples/garage.yaml). With
+`create: false`, the bucket is adopted: deleting the `StaticSite` leaves it in
+place, whatever `deletionPolicy` says.
+
+Point a hostname at Garage's website endpoint whose name matches the bucket. The
+`root_domain` in `[s3_web]` decides the suffix: with
+`root_domain = ".web.garage.example.com"`, bucket `acme-docs` is served at
+`acme-docs.web.garage.example.com`. A host that is exactly the bucket name also
+works. The `ExternalName` Service follows `websiteEndpointTemplate`, so
+external-dns can publish that alias as usual.
 
 ## Per-site credentials
 

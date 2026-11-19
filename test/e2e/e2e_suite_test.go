@@ -51,25 +51,25 @@ const (
 	e2eNamespace = "static-s3-e2e"
 
 	// The in-cluster addresses the operator and its Jobs use.
-	minioEndpoint  = "http://minio." + e2eNamespace + ".svc.cluster.local:9000"
-	registryHost   = "registry." + e2eNamespace + ".svc.cluster.local:5000"
-	minioAccessKey = "minioadmin"
-	minioSecretKey = "minioadmin"
+	objectStoreEndpoint  = "http://objectstore." + e2eNamespace + ".svc.cluster.local:9000"
+	registryHost         = "registry." + e2eNamespace + ".svc.cluster.local:5000"
+	objectStoreAccessKey = "rustfsadmin"
+	objectStoreSecretKey = "rustfsadmin"
 
 	// Local ports the suite forwards to, so it can push images and fetch pages
 	// from outside the cluster.
-	localRegistryPort = 15000
-	localMinIOPort    = 19000
+	localRegistryPort    = 15000
+	localObjectStorePort = 19000
 )
 
 var (
-	// localRegistry and localMinIO are the forwarded addresses of the in-cluster
+	// localRegistry and localObjectStore are the forwarded addresses of the in-cluster
 	// registry and object store.
-	localRegistry = fmt.Sprintf("127.0.0.1:%d", localRegistryPort)
-	localMinIO    = fmt.Sprintf("http://127.0.0.1:%d", localMinIOPort)
+	localRegistry    = fmt.Sprintf("127.0.0.1:%d", localRegistryPort)
+	localObjectStore = fmt.Sprintf("http://127.0.0.1:%d", localObjectStorePort)
 
-	registryForward *portForward
-	minioForward    *portForward
+	registryForward    *portForward
+	objectStoreForward *portForward
 )
 
 // TestE2E runs the end-to-end suite against an isolated Kind cluster.
@@ -98,11 +98,11 @@ var _ = BeforeSuite(func() {
 	By("deploying an object store and a registry into the cluster")
 	// The sync Job pulls the site image over the registry API from inside the
 	// cluster, so a registry the Pod can reach is not optional here.
-	applyTestData("minio.yaml")
+	applyTestData("objectstore.yaml")
 	applyTestData("registry.yaml")
 
 	By("waiting for the object store and registry to become available")
-	waitForDeployment("minio")
+	waitForDeployment("objectstore")
 	waitForDeployment("registry")
 
 	By("installing the operator with Helm")
@@ -110,20 +110,20 @@ var _ = BeforeSuite(func() {
 
 	By("forwarding the registry and the object store to localhost")
 	registryForward = startPortForward("svc/registry", localRegistryPort, 5000)
-	minioForward = startPortForward("svc/minio", localMinIOPort, 9000)
+	objectStoreForward = startPortForward("svc/objectstore", localObjectStorePort, 9000)
 
 	// A forward that is not ready yet fails the first push in a way that looks like
 	// a registry problem, so it is worth waiting for explicitly.
 	waitForEndpoint(fmt.Sprintf("http://%s/v2/", localRegistry))
-	waitForEndpoint(localMinIO + "/minio/health/live")
+	waitForEndpoint(localObjectStore + "/health")
 })
 
 var _ = AfterSuite(func() {
 	if registryForward != nil {
 		registryForward.stop()
 	}
-	if minioForward != nil {
-		minioForward.stop()
+	if objectStoreForward != nil {
+		objectStoreForward.stop()
 	}
 
 	By("collecting operator logs")
@@ -149,7 +149,7 @@ func installOperator() {
 		"--set", "manager.image.pullPolicy=Never",
 		// The operator's defaults are what a site inherits, so setting them here also
 		// checks that the chart wires them through to the manager's flags.
-		"--set", "operator.defaults.endpoint=" + minioEndpoint,
+		"--set", "operator.defaults.endpoint=" + objectStoreEndpoint,
 		"--set", "operator.defaults.forcePathStyle=true",
 		"--set", "operator.defaults.region=us-east-1",
 		// The syncer image is the operator image, and must not be pulled.
@@ -159,8 +159,8 @@ func installOperator() {
 		"--set", "operator.reconcile.syncRetryMaxDelay=20s",
 		"--set", "operator.reconcile.ownershipRecheckInterval=30s",
 		"--set", "operator.credentials.create=true",
-		"--set", "operator.credentials.accessKeyID=" + minioAccessKey,
-		"--set", "operator.credentials.secretAccessKey=" + minioSecretKey,
+		"--set", "operator.credentials.accessKeyID=" + objectStoreAccessKey,
+		"--set", "operator.credentials.secretAccessKey=" + objectStoreSecretKey,
 		// Metrics need no certificates for this run.
 		"--set", "metrics.enabled=false",
 	}

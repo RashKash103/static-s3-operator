@@ -143,6 +143,15 @@ Integration tests are behind the `integration` build tag and skip without
 how a provider behaves, and a mock built from this code's own assumptions would
 agree with those assumptions and prove nothing.
 
+The server is RustFS, pinned, in both the `Makefile` and
+`test/e2e/testdata/objectstore.yaml`. It replaced MinIO when MinIO's image
+stopped being publicly pullable. Garage was tried and rejected for CI: it has no
+bucket policies, tagging or anonymous S3 reads, so the tests for exactly the
+behaviour most likely to differ between providers would all skip. Any
+replacement has to run the integration suite with **no skips**. Garage's partial
+support is documented in `docs/credentials.md`, and that section was measured,
+not copied from Garage's docs; re-measure it if you change it.
+
 `test/examples` applies every file in `examples/` and `config/samples/` to a real
 API server. If you add an example, it is checked automatically; if you change the
 API, a stale example fails the build.

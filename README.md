@@ -452,7 +452,7 @@ spec:
 
 ## Non-AWS S3 providers
 
-The operator works against any S3-compatible object store. Usually three settings:
+The operator works against S3-compatible object stores. Usually three settings:
 
 ```yaml
 operator:
@@ -471,6 +471,15 @@ directory request to `index.html`, and the `BucketReady` condition says so), one
 without bucket tagging records ownership in a marker object, and one that rejects
 object ACLs gets uploads without them. The full list, and what to set, is in
 [docs/credentials.md](docs/credentials.md#s3-compatible-providers).
+
+The one piece that cannot be absent by default is **bucket policies**, which are
+how a site becomes publicly readable. A provider without them, such as
+[Garage](https://garagehq.deuxfleurs.fr), needs `publicRead: false` and its own
+way of making the bucket public. Garage is **partially supported** on those terms:
+[what works and how to set it up](docs/credentials.md#garage), and
+[`examples/garage.yaml`](examples/garage.yaml). CI tests against
+[RustFS](https://github.com/rustfs/rustfs), which implements everything the
+operator uses.
 
 ## Editor support for writing manifests
 
@@ -517,6 +526,7 @@ Complete, commented manifests in [`examples/`](examples/):
 | [`generated-bucket-name.yaml`](examples/generated-bucket-name.yaml) | Letting the operator name the bucket, and naming it yourself |
 | [`aws-production.yaml`](examples/aws-production.yaml) | AWS with cache policy, tags and DNS |
 | [`s3-compatible-provider.yaml`](examples/s3-compatible-provider.yaml) | A non-AWS endpoint, path style, per-site credentials |
+| [`garage.yaml`](examples/garage.yaml) | Garage, which has no bucket policies: an adopted bucket served from its website endpoint |
 | [`spa.yaml`](examples/spa.yaml) | A single page application routed client side |
 | [`digest-pinned.yaml`](examples/digest-pinned.yaml) | GitOps-style pinning, no polling |
 | [`private-registry.yaml`](examples/private-registry.yaml) | A site image behind a private registry |

@@ -131,6 +131,18 @@ be adopted. See
 [`examples/multiple-sites-one-bucket.yaml`](../examples/multiple-sites-one-bucket.yaml).
 
 ```
+apply bucket policy to "my-site": ... api error NotImplemented: Unimplemented action: PutBucketPolicy
+```
+
+The provider does not implement bucket policies, so `publicRead`, which is on by
+default, cannot be applied. Garage is the usual case. Set
+`spec.bucket.publicRead: false` and make the bucket public the provider's own
+way; for Garage, see [credentials.md § Garage](credentials.md#garage). On
+Garage, also expect a site the operator created to be unreachable from Garage's
+website endpoint until the bucket has a global alias. The same section explains
+why, and how to avoid it.
+
+```
 InvalidAccessKeyId / SignatureDoesNotMatch
 ```
 

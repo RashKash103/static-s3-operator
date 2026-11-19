@@ -56,9 +56,15 @@ func (m *BucketManager) Exists(ctx context.Context, bucket string) (bool, error)
 	}
 }
 
-// Create creates the bucket. It reports created=false when the bucket already
-// existed under the same credentials, so the caller can tell a bucket it just
-// made from one it merely found.
+// Create creates the bucket. It reports created=false when the provider says the
+// bucket already existed under the same credentials (BucketAlreadyOwnedByYou).
+//
+// A true result means the provider accepted the request, not that the bucket is
+// new. AWS in us-east-1, and several compatible providers, answer a repeat
+// CreateBucket from the bucket's owner with plain success. Ownership must
+// therefore never be inferred from this alone: callers check Exists first, which
+// is what keeps a bucket somebody already had from being recorded as created,
+// and so from being deleted with a StaticSite.
 func (m *BucketManager) Create(ctx context.Context, bucket, region string) (bool, error) {
 	input := &s3.CreateBucketInput{Bucket: aws.String(bucket)}
 	// us-east-1 is the API's implicit location and rejects an explicit

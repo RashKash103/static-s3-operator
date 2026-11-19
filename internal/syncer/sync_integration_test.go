@@ -56,8 +56,8 @@ func testClient(t *testing.T) *awss3.Client {
 		Endpoint:       endpoint,
 		ForcePathStyle: true,
 		Credentials: operators3.Credentials{
-			AccessKeyID:     envOrDefault("S3_TEST_ACCESS_KEY", "minioadmin"),
-			SecretAccessKey: envOrDefault("S3_TEST_SECRET_KEY", "minioadmin"),
+			AccessKeyID:     envOrDefault("S3_TEST_ACCESS_KEY", "rustfsadmin"),
+			SecretAccessKey: envOrDefault("S3_TEST_SECRET_KEY", "rustfsadmin"),
 		},
 		MaxRetries: 3,
 	})

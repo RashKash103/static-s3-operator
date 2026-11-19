@@ -54,8 +54,8 @@ func testClient(t *testing.T) *awss3.Client {
 		// addressing, because "bucket.localhost" does not resolve.
 		ForcePathStyle: true,
 		Credentials: Credentials{
-			AccessKeyID:     envOrDefault("S3_TEST_ACCESS_KEY", "minioadmin"),
-			SecretAccessKey: envOrDefault("S3_TEST_SECRET_KEY", "minioadmin"),
+			AccessKeyID:     envOrDefault("S3_TEST_ACCESS_KEY", "rustfsadmin"),
+			SecretAccessKey: envOrDefault("S3_TEST_SECRET_KEY", "rustfsadmin"),
 		},
 		MaxRetries: 3,
 	})
@@ -138,12 +138,18 @@ func TestBucketLifecycle(t *testing.T) {
 
 	// Creating it again has to be a no-op rather than an error, or every reconcile
 	// after the first would fail.
+	//
+	// Whether it also reports "already existed" is up to the provider. AWS in
+	// us-east-1 answers a repeat CreateBucket from the owner with 200 OK, and so
+	// do several compatible providers, RustFS among them. That is why the
+	// provisioner only calls Create after Exists has said the bucket is absent, and
+	// never treats Create's answer as proof of who made a bucket.
 	created, err = manager.Create(ctx, bucket, "us-east-1")
 	if err != nil {
 		t.Fatalf("the second Create returned an error: %v", err)
 	}
 	if created {
-		t.Error("the second Create should report that the bucket already existed")
+		t.Log("this provider answers a repeat CreateBucket from the owner with success")
 	}
 }
 
