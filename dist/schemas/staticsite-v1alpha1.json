@@ -270,7 +270,7 @@
               "type": "boolean"
             },
             "pullInterval": {
-              "description": "pullInterval is how often a tagged (mutable) image reference is\nre-resolved to check for a new digest. Set it to \"0\" to disable polling so\nthat syncs only happen on spec changes or on an explicit\n\"web.rka.sh/sync-requested-at\" annotation.\n\nIgnored for digest-pinned references, which cannot change. Defaults to the\noperator's --default-pull-interval (24h out of the box).",
+              "description": "pullInterval is how often a tagged (mutable) image reference is\nre-resolved to check for a new digest. Set it to \"0\" to disable polling so\nthat syncs only happen on spec changes or on an explicit\n\"web.rka.sh/sync-requested-at\" annotation.\n\nA \"reconcile.fluxcd.io/requestedAt\" annotation, which is how a Flux\nReceiver delivers a registry webhook, re-resolves the tag immediately\nwhatever the interval. With webhooks in place a long interval is a safety\nnet, not the publishing latency.\n\nIgnored for digest-pinned references, which cannot change. Defaults to the\noperator's --default-pull-interval (24h out of the box).",
               "pattern": "^0$|^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
               "type": "string"
             }
@@ -2898,6 +2898,10 @@
           "description": "failedSyncs counts consecutive failed sync attempts. It resets to zero on\nsuccess and drives the retry backoff.",
           "format": "int32",
           "type": "integer"
+        },
+        "lastHandledReconcileAt": {
+          "description": "lastHandledReconcileAt is the value of the\n\"reconcile.fluxcd.io/requestedAt\" annotation that last caused the image to\nbe re-resolved. The name follows Flux's own status field, so tooling that\nwaits for a Flux object to pick up a request works on a StaticSite too.",
+          "type": "string"
         },
         "lastHandledSyncRequest": {
           "description": "lastHandledSyncRequest is the value of the\n\"web.rka.sh/sync-requested-at\" annotation that last triggered a sync. The\noperator compares the annotation against this to tell a new request from\none it has already acted on.",

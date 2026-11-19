@@ -67,6 +67,16 @@ const (
 	//	  web.rka.sh/sync-requested-at="$(date -u +%FT%TZ)" --overwrite
 	SyncRequestedAtAnnotation = GroupName + "/sync-requested-at"
 
+	// ReconcileRequestAnnotation is Flux's convention for "reconcile now", the
+	// annotation a Flux Receiver stamps on the objects it is pointed at. On a
+	// StaticSite it means "check the registry now": the tag is re-resolved at
+	// once, ignoring spec.source.pullInterval, but the site is only republished
+	// if the digest actually moved. That difference from SyncRequestedAtAnnotation
+	// is deliberate. A registry webhook fires for every push to a repository,
+	// including pushes of tags this site does not follow, and each of those
+	// should cost a manifest HEAD, not a full publish.
+	ReconcileRequestAnnotation = "reconcile.fluxcd.io/requestedAt"
+
 	// ForceBucketDeletionAnnotation permits deletion of a bucket the operator did
 	// not create. Without it, a bucket that fails the ownership check is always
 	// retained, whatever spec.bucket.deletionPolicy says. Use it deliberately:
@@ -176,6 +186,11 @@ type SourceSpec struct {
 	// re-resolved to check for a new digest. Set it to "0" to disable polling so
 	// that syncs only happen on spec changes or on an explicit
 	// "web.rka.sh/sync-requested-at" annotation.
+	//
+	// A "reconcile.fluxcd.io/requestedAt" annotation, which is how a Flux
+	// Receiver delivers a registry webhook, re-resolves the tag immediately
+	// whatever the interval. With webhooks in place a long interval is a safety
+	// net, not the publishing latency.
 	//
 	// Ignored for digest-pinned references, which cannot change. Defaults to the
 	// operator's --default-pull-interval (24h out of the box).
@@ -855,6 +870,13 @@ type StaticSiteStatus struct {
 	// one it has already acted on.
 	// +optional
 	LastHandledSyncRequest string `json:"lastHandledSyncRequest,omitempty"`
+
+	// lastHandledReconcileAt is the value of the
+	// "reconcile.fluxcd.io/requestedAt" annotation that last caused the image to
+	// be re-resolved. The name follows Flux's own status field, so tooling that
+	// waits for a Flux object to pick up a request works on a StaticSite too.
+	// +optional
+	LastHandledReconcileAt string `json:"lastHandledReconcileAt,omitempty"`
 
 	// failedSyncs counts consecutive failed sync attempts. It resets to zero on
 	// success and drives the retry backoff.

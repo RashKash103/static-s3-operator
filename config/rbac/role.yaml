@@ -61,6 +61,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - image.toolkit.fluxcd.io
+  resources:
+  - imagerepositories
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - web.rka.sh
   resources:
   - staticsites

@@ -431,6 +431,11 @@ spec:
                       that syncs only happen on spec changes or on an explicit
                       "web.rka.sh/sync-requested-at" annotation.
 
+                      A "reconcile.fluxcd.io/requestedAt" annotation, which is how a Flux
+                      Receiver delivers a registry webhook, re-resolves the tag immediately
+                      whatever the interval. With webhooks in place a long interval is a safety
+                      net, not the publishing latency.
+
                       Ignored for digest-pinned references, which cannot change. Defaults to the
                       operator's --default-pull-interval (24h out of the box).
                     pattern: ^0$|^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
@@ -3703,6 +3708,13 @@ spec:
                   success and drives the retry backoff.
                 format: int32
                 type: integer
+              lastHandledReconcileAt:
+                description: |-
+                  lastHandledReconcileAt is the value of the
+                  "reconcile.fluxcd.io/requestedAt" annotation that last caused the image to
+                  be re-resolved. The name follows Flux's own status field, so tooling that
+                  waits for a Flux object to pick up a request works on a StaticSite too.
+                type: string
               lastHandledSyncRequest:
                 description: |-
                   lastHandledSyncRequest is the value of the

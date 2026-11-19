@@ -56,6 +56,18 @@ bearing.
   UID.** A reconcile immediately after bucket creation can read the resource from a
   cache that has not caught up, and would otherwise mistake the site's own bucket
   for somebody else's.
+- **`reconcile.fluxcd.io/requestedAt` re-resolves but does not force a sync.**
+  Unlike `web.rka.sh/sync-requested-at`, it is excluded from `needsSync` and does
+  not override the retry backoff. It is how registry webhooks arrive, and those
+  fire for every tag pushed to a repository; forcing a publish would republish
+  every site on every unrelated push.
+- **The Flux relay (`internal/controller/flux_relay.go`) writes an annotation on
+  the StaticSite instead of enqueueing it.** A Flux Receiver's `kind` enum cannot
+  name a StaticSite, so webhooks come in through a Flux `ImageRepository`. The
+  relay is namespace-bound on purpose, reads `ImageRepository` as unstructured so
+  this module never depends on Flux's API, and is only started when discovery
+  finds the API at startup. Watching an absent kind would fail the cache sync and
+  take the manager down. `docs/flux.md` documents it for users.
 - **`patchStatus` skips a no-op write.** An unconditional status write produces an
   update event, which reconciles again, which writes status again.
 

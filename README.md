@@ -404,8 +404,34 @@ configure elsewhere.
 `spec.source.pullInterval` (24h by default). When the digest changes, the site is
 republished. Set it to `"0"` to stop polling.
 
-**Immediately, from CI.** Rather than waiting for the interval, have your pipeline
-ask for a sync after it pushes:
+**On push, with Flux.** If the cluster runs [Flux](https://fluxcd.io), a registry
+webhook can republish the site within seconds of a push. A Flux `Receiver` gets
+the webhook and annotates a Flux `ImageRepository`, and the operator relays that
+request to every `StaticSite` in the namespace built from the same repository:
+
+```yaml
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata: { name: docs, namespace: web }
+spec: { image: docker.io/acme/docs, interval: 24h }
+---
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Receiver
+metadata: { name: docs, namespace: web }
+spec:
+  type: dockerhub            # or harbor, quay, acr, gcr, nexus, generic...
+  secretRef: { name: docs-webhook-token }
+  resources:
+    - { apiVersion: image.toolkit.fluxcd.io/v1, kind: ImageRepository, name: docs }
+```
+
+The tag is re-checked at once, and the site is republished only if the tag
+actually moved, so pushes of unrelated tags cost nothing more than one registry
+request. Setup, registry-by-registry notes and troubleshooting are in
+[docs/flux.md](docs/flux.md).
+
+**Immediately, from CI.** Without Flux, have your pipeline ask for a sync after
+it pushes:
 
 ```sh
 kubectl annotate staticsite docs -n web \
@@ -505,6 +531,7 @@ Complete, commented manifests in [`examples/`](examples/):
 | [docs/configuration.md](docs/configuration.md) | Every `StaticSite` field and every chart value |
 | [docs/architecture.md](docs/architecture.md) | How a publish works, ownership, and the security model |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | What each condition means and how to diagnose it |
+| [docs/flux.md](docs/flux.md) | Publishing on push with Flux Receivers and registry webhooks |
 | [AGENTS.md](AGENTS.md) | Working on this repository, including with an AI agent |
 
 ## Development

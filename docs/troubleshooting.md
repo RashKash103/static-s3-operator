@@ -323,7 +323,19 @@ kubectl annotate staticsite my-site -n my-namespace \
   web.rka.sh/sync-requested-at="$(date -u +%FT%TZ)" --overwrite
 ```
 
-Doing this from CI after every push is better than shortening the interval.
+Doing this from CI after every push is better than shortening the interval, and
+a registry webhook through Flux is better still: see [flux.md](flux.md).
+
+**A webhook arrived but the site did not change.** Follow the chain in
+[flux.md § Troubleshooting](flux.md#troubleshooting). In short:
+
+```sh
+# The relay delivered the request, and the site handled it, when these are equal.
+kubectl get staticsite my-site -n my-namespace -o jsonpath='{.metadata.annotations.reconcile\.fluxcd\.io/requestedAt}{"  "}{.status.lastHandledReconcileAt}{"\n"}'
+```
+
+A webhook republishes only when the tag moved, and waits out the backoff after a
+failed publish (`status.nextSyncTime`).
 
 **The digest did not change.** Check what the operator sees:
 

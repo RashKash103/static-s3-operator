@@ -65,6 +65,31 @@ Three triggers, and nothing else:
 3. **Somebody asked.** Setting `web.rka.sh/sync-requested-at` to a new value
    publishes immediately, and overrides a retry backoff.
 
+A webhook is not a fourth trigger. It brings the first one forward. A new
+`reconcile.fluxcd.io/requestedAt`, which is how a Flux Receiver's webhook
+arrives, makes the next pass re-resolve the tag whatever `pullInterval` says, and
+the digest comparison then decides as usual. A webhook for a push that did not
+move this site's tag therefore costs one `HEAD` and nothing more.
+
+#### The Flux relay
+
+A Flux Receiver cannot target a `StaticSite`: its CRD only accepts Flux's own
+kinds. So the manager runs a second, optional controller. It watches Flux
+`ImageRepository` objects, the kind Flux documents as the target for registry
+webhooks. When one gets a new reconcile request, the controller copies it to
+each `StaticSite` in the same namespace that follows a tag in that repository.
+
+- **Writing the annotation rather than enqueueing the site** keeps one mechanism
+  on the `StaticSite` side, and leaves a visible trail: the annotation, and
+  `status.lastHandledReconcileAt` once it is handled.
+- **It is namespace-bound**, so one tenant's `ImageRepository` cannot reach
+  another tenant's site.
+- **It uses no Flux types.** The `ImageRepository` is read as unstructured, at
+  whatever version the API server serves, found by discovery at startup. A
+  cluster without Flux simply does not start the relay.
+
+[flux.md](flux.md) has the setup.
+
 An idle site costs one manifest `HEAD` plus, on the reconcile that follows, one
 bucket listing. That is what makes a daily poll affordable at any number of sites.
 
@@ -289,7 +314,7 @@ Every optional part of the S3 API is treated as optional:
 | `cmd/main.go` | The manager |
 | `cmd/syncer/` | The syncer, whose settings are all flags so a publish is legible in `kubectl describe job` |
 | `internal/config/` | Cluster-wide defaults, and resolving a site against them in one place |
-| `internal/controller/` | The reconcile loop, credential resolution, the Job and Service builders |
+| `internal/controller/` | The reconcile loop, credential resolution, the Job and Service builders, and the Flux `ImageRepository` relay |
 | `internal/provisioner/` | The seam between the controller and S3, so the reconcile loop is testable without an object store |
 | `internal/registry/` | Digest resolution, and a keychain built from pull Secrets |
 | `internal/s3/` | Bucket lifecycle, ownership, policies, and the provider-quirk error classifiers |

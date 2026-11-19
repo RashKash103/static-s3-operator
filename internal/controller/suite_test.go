@@ -99,7 +99,11 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			// Flux's ImageRepository, for the webhook relay.
+			filepath.Join("testdata", "crds"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -152,6 +156,16 @@ var _ = BeforeSuite(func() {
 		Defaults:     defaults,
 		Provisioner:  fakeS3,
 		ResolveImage: fakeRegistry.Resolve,
+	}).SetupWithManager(manager)).To(Succeed())
+
+	By("starting the Flux ImageRepository relay")
+	// Discovered exactly as in production, which also checks the discovery itself.
+	imageRepository, fluxInstalled, err := DiscoverFluxImageRepository(manager.GetRESTMapper())
+	Expect(err).NotTo(HaveOccurred())
+	Expect(fluxInstalled).To(BeTrue(), "the stub ImageRepository CRD should be discoverable")
+	Expect((&FluxRelayReconciler{
+		Client:          manager.GetClient(),
+		ImageRepository: imageRepository,
 	}).SetupWithManager(manager)).To(Succeed())
 
 	go func() {

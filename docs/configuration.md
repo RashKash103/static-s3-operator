@@ -49,7 +49,7 @@ Where the site's files come from.
 | --- | --- | --- | --- |
 | `image` | string | **required** | Container image holding the built site. A tag is re-resolved on an interval; a digest is treated as immutable and never re-polled. |
 | `path` | string | *operator default* (`/usr/share/nginx/html`) | Absolute directory inside the image whose **contents** become the site root. With `/site`, `/site/index.html` uploads as `index.html`. |
-| `pullInterval` | duration | *operator default* (`24h`) | How often a tagged reference is re-resolved. `"0"` disables polling. Ignored for a digest. |
+| `pullInterval` | duration | *operator default* (`24h`) | How often a tagged reference is re-resolved. `"0"` disables polling. Ignored for a digest. A `reconcile.fluxcd.io/requestedAt` request re-resolves at once regardless; see [flux.md](flux.md). |
 | `imagePullSecrets` | list of `{name}` | none | `dockerconfigjson` Secrets in this namespace. Used by the operator to resolve the tag **and** by the sync Job to download the layers. |
 | `plainHTTP` | bool | `false` | Talk to the registry over HTTP. For an in-cluster development registry. |
 | `insecureSkipTLSVerify` | bool | `false` | Skip registry certificate verification. Development only. |
@@ -432,18 +432,27 @@ than deleting it, which would delete its bucket.
 | `failedSyncs` | Consecutive failures, which drive the backoff |
 | `syncHistory` | Recent attempts, newest first |
 | `lastHandledSyncRequest` | The sync-request annotation value already acted on |
+| `lastHandledReconcileAt` | The `reconcile.fluxcd.io/requestedAt` value that last caused a re-resolve. Equal to the annotation once the request has been handled |
 
 ### Annotations
 
 | Annotation | Effect |
 | --- | --- |
 | `web.rka.sh/sync-requested-at` | Publish now when the value changes. Overrides the retry backoff and the poll interval. |
+| `reconcile.fluxcd.io/requestedAt` | Flux's convention. Re-resolve the tag now when the value changes, ignoring the poll interval, and publish **only if the digest moved**. Does not override the retry backoff. Normally written by the operator's Flux relay; see [flux.md](flux.md). |
 | `web.rka.sh/force-bucket-deletion: "true"` | Skip the ownership check on deletion. Removes the only guard against destroying somebody else's data. |
 
 ```sh
 kubectl annotate staticsite docs -n web \
   web.rka.sh/sync-requested-at="$(date -u +%FT%TZ)" --overwrite
 ```
+
+The operator also watches Flux `ImageRepository` objects, when Flux's image API
+is installed at startup. A new `reconcile.fluxcd.io/requestedAt` on one is
+copied to each `StaticSite` in the same namespace that follows a tag in the same
+repository. There is no setting for this: without Flux there is nothing to
+relay, and with Flux nothing happens until you point a Receiver at an
+`ImageRepository`. See [flux.md](flux.md).
 
 ## Chart values
 

@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -574,6 +575,115 @@ var _ = Describe("StaticSite Controller", func() {
 		})
 	})
 
+	Context("Flux reconcile requests", func() {
+		// An hour-long pull interval makes these specs meaningful: without the
+		// request, the moved tag would not be noticed for the duration of the test.
+		withLongPullInterval := func(s *webv1alpha1.StaticSite) {
+			s.Spec.Source.PullInterval = &metav1.Duration{Duration: time.Hour}
+		}
+
+		requestReconcile := func(value string) {
+			Eventually(func(g Gomega) {
+				site := fetch()
+				if site.Annotations == nil {
+					site.Annotations = map[string]string{}
+				}
+				site.Annotations[webv1alpha1.ReconcileRequestAnnotation] = value
+				g.Expect(k8sClient.Update(ctx, site)).To(Succeed())
+			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
+		}
+
+		It("re-resolves the tag at once and publishes a moved digest", func() {
+			create(newSite(withLongPullInterval))
+			syncToReady(testDigest)
+			fakeRegistry.setDigest(testImage, otherDigest)
+
+			requestReconcile("2026-11-18T10:00:00Z")
+
+			finishJob(waitForJob(otherDigest), batchv1.JobComplete, "")
+			Eventually(func(g Gomega) {
+				site := fetch()
+				g.Expect(site.Status.SyncedDigest).To(Equal(otherDigest))
+				g.Expect(site.Status.LastHandledReconcileAt).To(Equal("2026-11-18T10:00:00Z"))
+			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
+		})
+
+		It("does not republish when the digest has not moved", func() {
+			// The difference from web.rka.sh/sync-requested-at: a registry webhook fires
+			// for pushes of every tag, and one for a tag this site does not follow must
+			// not cost a publish.
+			create(newSite(withLongPullInterval))
+			syncToReady(testDigest)
+			resolvesBefore := fakeRegistry.resolveCount()
+
+			requestReconcile("2026-11-18T11:00:00Z")
+
+			Eventually(func(g Gomega) {
+				g.Expect(fetch().Status.LastHandledReconcileAt).To(Equal("2026-11-18T11:00:00Z"))
+				g.Expect(fakeRegistry.resolveCount()).To(BeNumerically(">", resolvesBefore),
+					"the request should have reached the registry")
+			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
+			resolvesAfter := fakeRegistry.resolveCount()
+			Consistently(func(g Gomega) {
+				g.Expect(listJobs()).To(HaveLen(1), "no second sync Job should start")
+				g.Expect(fakeRegistry.resolveCount()).To(Equal(resolvesAfter),
+					"a handled request should not keep bypassing the pull interval")
+			}, 2*time.Second, 250*time.Millisecond).Should(Succeed())
+		})
+
+		It("relays a webhook delivered to a matching Flux ImageRepository", func() {
+			create(newSite(withLongPullInterval))
+			syncToReady(testDigest)
+			fakeRegistry.setDigest(testImage, otherDigest)
+
+			By("ignoring an ImageRepository for another repository")
+			other := newImageRepository(namespace, "other", "registry.example.com/acme/other")
+			Expect(k8sClient.Create(ctx, other)).To(Succeed())
+			annotateImageRepository(other, "2026-11-18T12:00:00Z")
+
+			By("ignoring an ImageRepository for the same repository in another namespace")
+			foreignNamespace := namespace + "-foreign"
+			Expect(k8sClient.Create(ctx, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: foreignNamespace},
+			})).To(Succeed())
+			foreign := newImageRepository(foreignNamespace, "site", "registry.example.com/acme/site")
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+			annotateImageRepository(foreign, "2026-11-18T12:00:00Z")
+
+			Consistently(func() string {
+				return reconcileRequest(fetch())
+			}, 2*time.Second, 250*time.Millisecond).Should(BeEmpty())
+
+			By("relaying a request from the ImageRepository for this site's repository")
+			matching := newImageRepository(namespace, "site", "registry.example.com/acme/site")
+			Expect(k8sClient.Create(ctx, matching)).To(Succeed())
+			annotateImageRepository(matching, "2026-11-18T12:30:00Z")
+
+			finishJob(waitForJob(otherDigest), batchv1.JobComplete, "")
+			Eventually(func(g Gomega) {
+				site := fetch()
+				g.Expect(reconcileRequest(site)).To(Equal("2026-11-18T12:30:00Z"))
+				g.Expect(site.Status.SyncedDigest).To(Equal(otherDigest))
+			}, eventuallyTimeout, eventuallyPoll).Should(Succeed())
+		})
+
+		It("does not relay to a digest-pinned site", func() {
+			create(newSite(func(s *webv1alpha1.StaticSite) {
+				s.Spec.Source.Image = "registry.example.com/acme/site@" + testDigest
+			}))
+			fakeRegistry.setDigest("registry.example.com/acme/site@"+testDigest, testDigest)
+			syncToReady(testDigest)
+
+			imageRepository := newImageRepository(namespace, "site", "registry.example.com/acme/site")
+			Expect(k8sClient.Create(ctx, imageRepository)).To(Succeed())
+			annotateImageRepository(imageRepository, "2026-11-18T13:00:00Z")
+
+			Consistently(func() string {
+				return reconcileRequest(fetch())
+			}, 2*time.Second, 250*time.Millisecond).Should(BeEmpty())
+		})
+	})
+
 	Context("when a sync fails", func() {
 		It("reports the failure and counts it", func() {
 			// A long retry delay keeps the failed state observable: with the suite's
@@ -804,6 +914,24 @@ func kubectlFreeAnnotate(site *webv1alpha1.StaticSite) (*webv1alpha1.StaticSite,
 	}
 	site.Annotations["test.rka.sh/nudge"] = time.Now().Format(time.RFC3339Nano)
 	return site, k8sClient.Update(ctx, site)
+}
+
+// newImageRepository builds a Flux ImageRepository. It is unstructured because
+// the operator deliberately does not depend on Flux's API types.
+func newImageRepository(namespace, name, image string) *unstructured.Unstructured {
+	imageRepository := &unstructured.Unstructured{}
+	imageRepository.SetGroupVersionKind(FluxImageRepositoryGroupKind.WithVersion("v1"))
+	imageRepository.SetNamespace(namespace)
+	imageRepository.SetName(name)
+	Expect(unstructured.SetNestedField(imageRepository.Object, image, "spec", "image")).To(Succeed())
+	return imageRepository
+}
+
+// annotateImageRepository does what a Flux Receiver does when a webhook arrives.
+func annotateImageRepository(imageRepository *unstructured.Unstructured, requestedAt string) {
+	patch := client.MergeFrom(imageRepository.DeepCopy())
+	imageRepository.SetAnnotations(map[string]string{webv1alpha1.ReconcileRequestAnnotation: requestedAt})
+	Expect(k8sClient.Patch(ctx, imageRepository, patch)).To(Succeed())
 }
 
 func findCondition(site *webv1alpha1.StaticSite, conditionType string) *metav1.Condition {

@@ -286,6 +286,14 @@ func (r *StaticSiteReconciler) resolveSource(
 		return cached, nil
 	}
 
+	// A reconcile request asks for exactly one fresh resolve, and this is it. It is
+	// recorded as handled even if the resolve fails: SourceResolved then goes false,
+	// which keeps the cache bypassed until a resolve succeeds anyway, so the
+	// request is not lost, and leaving it pending would add nothing.
+	if request := reconcileRequest(site); request != "" {
+		site.Status.LastHandledReconcileAt = request
+	}
+
 	keychain, err := r.keychainFor(ctx, site, effective)
 	if err != nil {
 		return nil, err
@@ -343,6 +351,10 @@ func (r *StaticSiteReconciler) cachedReference(
 	}
 	// A manual sync request means "check now", whatever the interval says.
 	if request := syncRequest(site); request != "" && request != status.LastHandledSyncRequest {
+		return nil
+	}
+	// So does a Flux reconcile request, which is how a registry webhook arrives.
+	if hasPendingReconcileRequest(site) {
 		return nil
 	}
 
@@ -510,6 +522,21 @@ func (r *StaticSiteReconciler) needsSync(
 // syncRequest returns the value of the manual sync annotation.
 func syncRequest(site *webv1alpha1.StaticSite) string {
 	return site.Annotations[webv1alpha1.SyncRequestedAtAnnotation]
+}
+
+// reconcileRequest returns the value of Flux's reconcile annotation.
+func reconcileRequest(site *webv1alpha1.StaticSite) string {
+	return site.Annotations[webv1alpha1.ReconcileRequestAnnotation]
+}
+
+// hasPendingReconcileRequest reports whether a Flux reconcile request has arrived
+// that has not yet caused a resolve.
+//
+// It deliberately plays no part in needsSync: a reconcile request asks for a fresh
+// look at the registry, and only a changed digest turns that into a publish.
+func hasPendingReconcileRequest(site *webv1alpha1.StaticSite) bool {
+	request := reconcileRequest(site)
+	return request != "" && request != site.Status.LastHandledReconcileAt
 }
 
 // findPendingJob returns the sync Job whose outcome is not yet recorded, whether

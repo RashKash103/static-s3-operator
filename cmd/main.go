@@ -231,6 +231,27 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "staticsite")
 		os.Exit(1)
 	}
+
+	// Flux Receivers cannot target a StaticSite, so registry webhooks reach a site
+	// by way of a Flux ImageRepository. See docs/flux.md.
+	imageRepository, fluxInstalled, err := controller.DiscoverFluxImageRepository(mgr.GetRESTMapper())
+	switch {
+	case err != nil:
+		setupLog.Error(err, "Failed to discover the Flux ImageRepository API")
+		os.Exit(1)
+	case !fluxInstalled:
+		setupLog.Info("Flux ImageRepository API not found; Flux webhook relay disabled until restart")
+	default:
+		if err := (&controller.FluxRelayReconciler{
+			Client:          mgr.GetClient(),
+			ImageRepository: imageRepository,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "flux-imagerepository-relay")
+			os.Exit(1)
+		}
+		setupLog.Info("Relaying Flux reconcile requests from ImageRepositories",
+			"apiVersion", imageRepository.GroupVersion().String())
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
